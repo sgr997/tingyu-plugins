@@ -25,6 +25,20 @@ const PLUGIN_SRC_URL = [
 ].join('/');
 const PAGE_SIZE = 30;
 
+/** Cloudflare Access 服务令牌，让插件绕过浏览器那套邮箱验证。 */
+function accessCredentials() {
+  try {
+    if (typeof env !== 'undefined' && env.userVariables) {
+      const id = String(env.userVariables.cfClientId || '').trim();
+      const secret = String(env.userVariables.cfClientSecret || '').trim();
+      if (id && secret) return { id, secret };
+    }
+  } catch (e) {
+    /* env 不存在时当没配 */
+  }
+  return null;
+}
+
 /** 接口 Token，用户在插件设置里填一次，存在宿主 Keychain 里。 */
 function apiToken() {
   try {
@@ -62,6 +76,11 @@ async function api(path, params, timeout) {
   const headers = { ...NET_EASE_HEADERS };
   const token = apiToken();
   if (token) headers['X-Api-Token'] = token;
+  const access = accessCredentials();
+  if (access) {
+    headers['CF-Access-Client-Id'] = access.id;
+    headers['CF-Access-Client-Secret'] = access.secret;
+  }
   try {
     res = await axios.get(url, {
       params: params || {},
@@ -77,7 +96,9 @@ async function api(path, params, timeout) {
   }
   const data = res.data;
   if (typeof data === 'string' || (res.headers && String(res.headers['content-type'] || '').includes('text/html'))) {
-    throw new Error('接口返回了网页而不是数据，检查 API 地址是否指向了文档站');
+    throw new Error(accessCredentials()
+      ? '接口被 Cloudflare Access 拒绝了，检查插件的 Access 令牌'
+      : '接口在 Cloudflare Access 后面，插件里要填 Access 客户端 ID 和密钥');
   }
   if (!data || typeof data !== 'object') throw new Error('接口返回的不是 JSON');
   if (data.code !== undefined && data.code !== 200) {
@@ -566,6 +587,19 @@ module.exports = {
       required: true,
       hint: '接口访问令牌',
       description: '自建接口开了认证，必须填写才能搜索和播放'
+    },
+    {
+      key: 'cfClientId',
+      name: 'Access Client ID',
+      type: 'password',
+      hint: 'Cloudflare Access 服务令牌 ID',
+      description: '接口在 Access 后面，插件靠服务令牌免邮箱验证'
+    },
+    {
+      key: 'cfClientSecret',
+      name: 'Access Client Secret',
+      type: 'password',
+      hint: 'Cloudflare Access 服务令牌密钥'
     },
     {
       key: 'apiBase',
