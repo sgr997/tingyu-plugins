@@ -12,7 +12,7 @@ const axios = require('axios');
 const PLATFORM = '听屿·网易云';
 // 默认接口地址按字符拼出来，源码里不出现明文域名
 const DEFAULT_BASE = (() => {
-  const codes = [104, 116, 116, 112, 115, 58, 47, 47, 119, 121, 121, 97, 112, 105, 46, 103, 111, 107, 117, 46, 116, 111, 112];
+  const codes = [104, 116, 116, 112, 115, 58, 47, 47, 119, 121, 121, 46, 103, 111, 107, 117, 46, 116, 111, 112];
   let out = '';
   for (let i = 0; i < codes.length; i += 1) out += String.fromCharCode(codes[i]);
   return out;
