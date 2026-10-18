@@ -13,6 +13,18 @@ const PLATFORM = '听屿·网易云';
 const DEFAULT_BASE = 'https://wyy.goku.top';
 const PAGE_SIZE = 30;
 
+/** 接口 Token，用户在插件设置里填一次，存在宿主 Keychain 里。 */
+function apiToken() {
+  try {
+    if (typeof env !== 'undefined' && env.userVariables && env.userVariables.token) {
+      return String(env.userVariables.token).trim();
+    }
+  } catch (e) {
+    /* env 不存在时当没配 */
+  }
+  return '';
+}
+
 /** 用户可以在插件设置里把 apiBase 指到自己的部署。 */
 function apiBase() {
   try {
@@ -35,14 +47,20 @@ const NET_EASE_HEADERS = {
 async function api(path, params, timeout) {
   const url = apiBase() + path;
   let res;
+  const headers = { ...NET_EASE_HEADERS };
+  const token = apiToken();
+  if (token) headers['X-Api-Token'] = token;
   try {
     res = await axios.get(url, {
       params: params || {},
-      headers: NET_EASE_HEADERS,
+      headers,
       timeout: timeout || 15000
     });
   } catch (e) {
     const status = e && e.response && e.response.status;
+    if (status === 401) {
+      throw new Error(token ? 'API Token 不对，去插件设置里改一下' : '这个接口需要 API Token，去插件设置里填');
+    }
     throw new Error(status ? `接口返回 HTTP ${status}` : `接口请求失败：${e.message}`);
   }
   const data = res.data;
@@ -526,6 +544,14 @@ module.exports = {
     importMusicSheet: ['支持网易云歌单链接、短链或整段分享文案']
   },
   userVariables: [
+    {
+      key: 'token',
+      name: 'API Token',
+      type: 'password',
+      required: true,
+      hint: '接口访问令牌',
+      description: '自建接口开了认证，必须填写才能搜索和播放'
+    },
     {
       key: 'apiBase',
       name: 'API 地址',
