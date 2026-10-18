@@ -32,14 +32,14 @@ const NET_EASE_HEADERS = {
 };
 
 /** 统一的 GET，把 code !== 200 当成错误抛出去，避免界面拿到空数据以为成功。 */
-async function api(path, params) {
+async function api(path, params, timeout) {
   const url = apiBase() + path;
   let res;
   try {
     res = await axios.get(url, {
       params: params || {},
       headers: NET_EASE_HEADERS,
-      timeout: 15000
+      timeout: timeout || 15000
     });
   } catch (e) {
     const status = e && e.response && e.response.status;
@@ -63,7 +63,9 @@ function secure(url) {
   if (typeof url !== 'string') return '';
   if (!/^http:\/\//i.test(url)) return url;
   // 只动网易云自己的域，别的外链保持原样，免得把不支持的地址改坏
-  return /(^https?:\/\/)?[^/]*\.(music\.)?126\.net/i.test(url) ? url.replace(/^http:/i, 'https:') : url;
+  return /(^https?:\/\/)?[^/]*\.((music\.)?126\.net|kuwo\.cn|kugou\.com|migu\.cn|qq\.com)/i.test(url)
+    ? url.replace(/^http:/i, 'https:')
+    : url;
 }
 
 function artistNames(song) {
@@ -188,20 +190,29 @@ async function getMediaSource(musicItem, quality) {
   const id = musicItem._songId || musicItem.id;
   if (!id) throw new Error('歌曲 ID 缺失');
   const level = QUALITY_LEVEL[quality] || 'exhigh';
-  let data = await api('/song/url/v1', { id: String(id), level });
-  let item = data.data && data.data[0];
-  // 匿名会话有时第一下拿不到地址，隔一下重试一次再判死
-  if (!item || !item.url) {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    data = await api('/song/url/v1', { id: String(id), level });
-    item = data.data && data.data[0];
+
+  // 第一步：官方地址。正常歌曲这里就结束了，约 0.4 秒。
+  let trialUrl = '';
+  try {
+    const data = await api('/song/url/v1', { id: String(id), level });
+    const item = data.data && data.data[0];
+    if (item && item.url && !item.freeTrialInfo) return { url: secure(item.url), headers: NET_EASE_HEADERS };
+    if (item && item.url) trialUrl = item.url;
+  } catch (e) {
+    // 接口报错也继续往下试去灰
   }
-  if (!item || !item.url) {
-    if (item && item.code === 404) throw new Error('这首歌在网易云没有版权，换一首试试');
-    if (item && item.fee === 1) throw new Error('这首歌需要会员权限，当前接口拿不到播放地址');
-    throw new Error('没有拿到播放地址');
+
+  // 第二步：试听片段或没有版权，调去灰接口换其它平台的完整音源（3~15 秒）
+  try {
+    const matched = await api('/song/url/match', { id: String(id) }, 30000);
+    const url = typeof matched.data === 'string' ? matched.data : matched.data && matched.data.url;
+    if (url) return { url: secure(url), headers: NET_EASE_HEADERS };
+  } catch (e) {
+    // 去灰也失败，退回试听（如果有）
   }
-  return { url: secure(item.url), headers: NET_EASE_HEADERS };
+
+  if (trialUrl) return { url: secure(trialUrl), headers: NET_EASE_HEADERS };
+  throw new Error('这首歌拿不到音源');
 }
 
 async function getLyric(musicItem) {
