@@ -207,11 +207,13 @@ async function getMediaSource(musicItem, quality) {
     const matched = await api('/song/url/match', { id: String(id) }, 30000);
     const url = typeof matched.data === 'string' ? matched.data : matched.data && matched.data.url;
     if (url) return { url: secure(url), headers: NET_EASE_HEADERS };
+    // 去灰也没拿到整首。不能把试听片段当完整音源悄悄交出去：
+    // 打上 preview 标记，宿主据此提示用户，也不会把它写进播放缓存。
   } catch (e) {
     // 去灰也失败，退回试听（如果有）
   }
 
-  if (trialUrl) return { url: secure(trialUrl), headers: NET_EASE_HEADERS };
+  if (trialUrl) return { url: secure(trialUrl), headers: NET_EASE_HEADERS, preview: true };
   throw new Error('这首歌拿不到音源');
 }
 
