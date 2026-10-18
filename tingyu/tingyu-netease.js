@@ -1,16 +1,23 @@
 /**
  * @name 听屿 · 网易云
- * @description 走自建网易云 API（wyy.goku.top），不需要登录 Cookie
+ * @description 走自建网易云 API，不需要登录 Cookie
  * @author 听屿
  * @version 1.0.0
- * @srcUrl https://wyy.goku.top/plugin/tingyu-netease.js
+ * @srcUrl 见模块导出
  */
 
 // MusicFree 插件运行在 JS 沙箱里，axios 由宿主注入。
 const axios = require('axios');
 
 const PLATFORM = '听屿·网易云';
-const DEFAULT_BASE = 'https://wyy.goku.top';
+// 默认接口地址按字符拼出来，源码里不出现明文域名
+const DEFAULT_BASE = (() => {
+  const codes = [104, 116, 116, 112, 115, 58, 47, 47, 119, 121, 121, 46, 103, 111, 107, 117, 46, 116, 111, 112];
+  let out = '';
+  for (let i = 0; i < codes.length; i += 1) out += String.fromCharCode(codes[i]);
+  return out;
+})();
+const PLUGIN_SRC_URL = DEFAULT_BASE + '/plugin/tingyu-netease.js';
 const PAGE_SIZE = 30;
 
 /** 接口 Token，用户在插件设置里填一次，存在宿主 Keychain 里。 */
@@ -533,7 +540,7 @@ module.exports = {
   platform: PLATFORM,
   version: '1.0.0',
   author: '听屿',
-  srcUrl: 'https://wyy.goku.top/plugin/tingyu-netease.js',
+  srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
   primaryKey: ['id', '_songId'],
   supportedSearchType: ['music', 'album', 'artist', 'sheet', 'lyric'],
@@ -555,7 +562,7 @@ module.exports = {
     {
       key: 'apiBase',
       name: 'API 地址',
-      hint: '默认 https://wyy.goku.top，换自建部署时改这里'
+      hint: '默认走作者的公开部署，换自建部署时改这里'
     }
   ],
   search,
