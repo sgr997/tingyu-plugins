@@ -55,6 +55,17 @@ async function api(path, params) {
 
 // ============================ 字段整理 ============================
 
+/**
+ * 网易云的播放地址和封面都爱给 http，App 开了 ATS（不允许明文 HTTP），
+ * AVPlayer 会直接报 -1022。这些 CDN 都支持 https，统一升上去。
+ */
+function secure(url) {
+  if (typeof url !== 'string') return '';
+  if (!/^http:\/\//i.test(url)) return url;
+  // 只动网易云自己的域，别的外链保持原样，免得把不支持的地址改坏
+  return /(^https?:\/\/)?[^/]*\.(music\.)?126\.net/i.test(url) ? url.replace(/^http:/i, 'https:') : url;
+}
+
 function artistNames(song) {
   const list = song.ar || song.artists || [];
   if (Array.isArray(list) && list.length) {
@@ -80,7 +91,7 @@ function toSong(song) {
     title: song.name || '',
     artist: artistNames(song),
     album: album.name || '未知专辑',
-    artwork: album.picUrl || album.picUrl_str || song.picUrl || '',
+    artwork: secure(album.picUrl || album.picUrl_str || song.picUrl || ''),
     duration: song.dt || song.duration || 0,
     qualities: {
       low: { size: (song.l && song.l.size) || 0 },
@@ -101,7 +112,7 @@ function toSheet(playlist) {
     id: String(playlist.id),
     title: playlist.name || '',
     artist: (playlist.creator && playlist.creator.nickname) || '网易云音乐',
-    artwork: playlist.coverImgUrl || '',
+    artwork: secure(playlist.coverImgUrl || ''),
     description: playlist.description || '',
     trackCount: playlist.trackCount || 0,
     playCount: playlist.playCount || 0,
@@ -117,7 +128,7 @@ function toAlbum(album) {
     id: String(album.id),
     title: album.name || '',
     artist: artistNames(album),
-    artwork: album.picUrl || '',
+    artwork: secure(album.picUrl || ''),
     description: album.description || '',
     _albumId: String(album.id),
     _type: 'album'
@@ -132,8 +143,8 @@ function toArtist(artist) {
     title: artist.name || '',
     name: artist.name || '',
     artist: artist.name || '',
-    avatar: artist.picUrl || artist.img1v1Url || '',
-    artwork: artist.picUrl || artist.img1v1Url || '',
+    avatar: secure(artist.picUrl || artist.img1v1Url || ''),
+    artwork: secure(artist.picUrl || artist.img1v1Url || ''),
     description: artist.briefDesc || '',
     worksNum: artist.albumSize || 0,
     _artistId: String(artist.id),
@@ -190,7 +201,7 @@ async function getMediaSource(musicItem, quality) {
     if (item && item.fee === 1) throw new Error('这首歌需要会员权限，当前接口拿不到播放地址');
     throw new Error('没有拿到播放地址');
   }
-  return { url: item.url, headers: NET_EASE_HEADERS };
+  return { url: secure(item.url), headers: NET_EASE_HEADERS };
 }
 
 async function getLyric(musicItem) {
