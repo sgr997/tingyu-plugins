@@ -1,40 +1,22 @@
 # 听屿插件
 
-听屿（TingYu）用的 MusicFree 格式插件。这里放我们自己维护的插件，以及开发时需要对照的第三方插件副本。
+MusicFree 格式的插件仓库。
 
 ## 目录
 
 ```
-tingyu/        我们自己写的插件
-third-party/   别人写的插件，留着做对照和回退
+tingyu/        自己写的插件
+third-party/   第三方插件副本，做对照和回退用
 ```
 
-## 当前插件
+## 第三方插件
 
-| 文件 | 平台 | 说明 |
-| --- | --- | --- |
-| `tingyu/tingyu-netease.js` | 听屿·网易云 | 走自建网易云 API，不需要登录 Cookie；搜索、歌单、专辑、歌手、榜单、推荐、导入、歌词、评论、播放直链 |
-| `third-party/xinghai-music-source-wy-v1.6.js` | 星海音乐源 wy | 第三方插件（作者：万去了了），网易云资源，我们写自己的插件时参照它的字段格式 |
-| `third-party/bilibili.js` | bilibili | 第三方插件（作者：猫头猫，MusicFree 官方插件集），B 站收藏夹导入 |
+- `third-party/xinghai-music-source-wy-v1.6.js` — 星海音乐源 wy，作者：万去了了
+- `third-party/bilibili.js` — bilibili，作者：猫头猫（MusicFree 官方插件集）
 
-## 在听屿里安装
-
-插件页 → 从链接导入 → 粘贴插件地址。
-
-自建网易云插件的稳定地址：
-
-```
-https://wyy.goku.top/plugin/tingyu-netease.js
-```
-
-该地址由自建的网易云 API 服务直接提供，改完插件文件后替换即可，App 里重新拉一次就是新版本。
-
-## 接口认证
-
-自建接口需要 Token：在插件的「用户变量」里填 `API Token`，值存在 App 的 Keychain 里，不会写进插件地址或备份。接口地址同样是变量（`API 地址`），默认走作者的公开部署，也可以指向自己的部署。
+这两份版权归原作者，保留原文件头部信息，不做修改；升级时整份替换。
 
 ## 说明
 
-- `third-party/` 里的代码版权归原作者，保留原文件头部信息，不做修改；升级时整份替换。
-- 自己写的插件不内置任何音乐内容，所有数据来自插件运行时请求的第三方接口。
+- `tingyu/` 里的插件不内置任何音乐内容，数据来自插件运行时请求的第三方接口。
 - 插件在 App 的 JS 沙箱里运行，只依赖宿主注入的 `axios`，不使用 Node 专有模块。
