@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.5
+ * @version 1.1.6
  * @srcUrl 见模块导出
  */
 
@@ -675,7 +675,7 @@ async function getRecommendWorks() {
   const cookie = cookieHeader();
   if (!cookie) throw new Error('先在插件设置里填登录 Cookie 才能用每日推荐');
   const res = await api('/recommend/resource', { timestamp: Date.now() });
-  const list = (res && res.recommend && Array.isArray(res.recommend) ? res.recommend : [])
+  let list = (res && res.recommend && Array.isArray(res.recommend) ? res.recommend : [])
     .map((item) => {
       const sheet = item && item.platformRecommendationInfo && item.platformRecommendationInfo.songSheetRecommendation;
       const base = sheet || item;
@@ -691,6 +691,26 @@ async function getRecommendWorks() {
     })
     .filter((item) => item.id);
   if (!list.length) throw new Error('今日没有推荐歌单（账号不满足条件或登录已过期）');
+  // /recommend/resource 只回几张，首页一页三项时显得太薄，用 /personalized 补到 12 张。
+  if (list.length < 9) {
+    try {
+      const extra = await api('/personalized', { limit: 12, timestamp: Date.now() });
+      const seen = new Set(list.map((item) => item.id));
+      const topUp = (Array.isArray(extra && extra.result) ? extra.result : [])
+        .map((item) => ({
+          id: String((item && item.id) || ''),
+          title: (item && item.name) || '',
+          artist: (item && item.copywriter) || '',
+          album: '',
+          cover: (item && item.picUrl) || '',
+          sheet: { id: String((item && item.id) || ''), platform: PLATFORM }
+        }))
+        .filter((item) => item.id && item.title && !seen.has(item.id));
+      list = list.concat(topUp);
+    } catch (error) {
+      // 补位失败不影响已有推荐
+    }
+  }
   return { isEnd: true, data: list };
 }
 
@@ -707,7 +727,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.5',
+  version: '1.1.6',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
