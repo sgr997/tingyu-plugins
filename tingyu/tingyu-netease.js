@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.6
+ * @version 1.1.7
  * @srcUrl 见模块导出
  */
 
@@ -23,7 +23,6 @@ const PLUGIN_SRC_URL = [
   'tingyu-plugins',
   'main/tingyu/tingyu-netease.js'
 ].join('/');
-const LAN_BASE = 'http://192.168.31.115:3050';
 const PAGE_SIZE = 30;
 
 /** Cloudflare Access 服务令牌，让插件绕过浏览器那套邮箱验证。 */
@@ -70,44 +69,26 @@ const NET_EASE_HEADERS = {
   Referer: 'https://music.163.com/'
 };
 
-function apiBases() {
-  const configured = apiBase();
-  return configured === DEFAULT_BASE ? [LAN_BASE, DEFAULT_BASE] : [configured];
-}
-
-function requestHeaders(cookie, base) {
+/** 请求地址由 apiBase 配置决定，局域网切换交给 Loon。 */
+function requestHeaders(cookie) {
   const headers = { ...NET_EASE_HEADERS };
   if (cookie) headers.Cookie = cookie;
   const token = apiToken();
   if (token) headers['X-Api-Token'] = token;
-  if (base !== LAN_BASE) {
-    const access = accessCredentials();
-    if (access) {
-      headers['CF-Access-Client-Id'] = access.id;
-      headers['CF-Access-Client-Secret'] = access.secret;
-    }
+  const access = accessCredentials();
+  if (access) {
+    headers['CF-Access-Client-Id'] = access.id;
+    headers['CF-Access-Client-Secret'] = access.secret;
   }
   return headers;
 }
 
 async function requestApi(path, params, timeout, cookie) {
-  const bases = apiBases();
-  let lastError;
-  for (let i = 0; i < bases.length; i += 1) {
-    const base = bases[i];
-    try {
-      return await axios.get(base + path, {
-        params: params || {},
-        headers: requestHeaders(cookie, base),
-        timeout: timeout || 15000
-      });
-    } catch (e) {
-      lastError = e;
-      const status = e && e.response && e.response.status;
-      if (status === 401 || i === bases.length - 1) throw e;
-    }
-  }
-  throw lastError;
+  return axios.get(apiBase() + path, {
+    params: params || {},
+    headers: requestHeaders(cookie),
+    timeout: timeout || 15000
+  });
 }
 
 /**
@@ -744,7 +725,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.6',
+  version: '1.1.7',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
