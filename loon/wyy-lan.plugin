@@ -10,7 +10,7 @@ homeWifi = input,"",tag=家庭 Wi-Fi 名称,desc=多个 SSID 用英文或中文�
 lanBase = input,"",tag=局域网 API 地址,desc=填写包含协议和端口的局域网地址；留空时保持公网请求
 
 [Script]
-request if ${url} ~= /^https:\/\/wyy\.goku\.top(?:\/|$)/i then script("https://raw.githubusercontent.com/sgr997/tingyu-plugins/main/loon/wyy-lan.js", {${homeWifi}, ${lanBase}}) with tag="网易云局域网切换", timeout=40
+request if ${url} ~= /^https:\/\/wyy\.goku\.top(?:\/|$)/i then script("https://raw.githubusercontent.com/sgr997/tingyu-plugins/main/loon/wyy-lan.js", {${homeWifi}, ${lanBase}}) with tag="网易云局域网切换", timeout=40, requires_body=true, binary_body_mode=true
 
 [Mitm]
 hostname = wyy.goku.top
