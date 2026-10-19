@@ -23,6 +23,7 @@ const PLUGIN_SRC_URL = [
   'tingyu-plugins',
   'main/tingyu/tingyu-netease.js'
 ].join('/');
+const LAN_BASE = 'http://192.168.31.115:3050';
 const PAGE_SIZE = 30;
 
 /** Cloudflare Access 服务令牌，让插件绕过浏览器那套邮箱验证。 */
@@ -69,18 +70,44 @@ const NET_EASE_HEADERS = {
   Referer: 'https://music.163.com/'
 };
 
-/** 请求头：Token + Access 服务令牌，登录与普通接口共用。 */
-function requestHeaders(cookie) {
+function apiBases() {
+  const configured = apiBase();
+  return configured === DEFAULT_BASE ? [LAN_BASE, DEFAULT_BASE] : [configured];
+}
+
+function requestHeaders(cookie, base) {
   const headers = { ...NET_EASE_HEADERS };
   if (cookie) headers.Cookie = cookie;
   const token = apiToken();
   if (token) headers['X-Api-Token'] = token;
-  const access = accessCredentials();
-  if (access) {
-    headers['CF-Access-Client-Id'] = access.id;
-    headers['CF-Access-Client-Secret'] = access.secret;
+  if (base !== LAN_BASE) {
+    const access = accessCredentials();
+    if (access) {
+      headers['CF-Access-Client-Id'] = access.id;
+      headers['CF-Access-Client-Secret'] = access.secret;
+    }
   }
   return headers;
+}
+
+async function requestApi(path, params, timeout, cookie) {
+  const bases = apiBases();
+  let lastError;
+  for (let i = 0; i < bases.length; i += 1) {
+    const base = bases[i];
+    try {
+      return await axios.get(base + path, {
+        params: params || {},
+        headers: requestHeaders(cookie, base),
+        timeout: timeout || 15000
+      });
+    } catch (e) {
+      lastError = e;
+      const status = e && e.response && e.response.status;
+      if (status === 401 || i === bases.length - 1) throw e;
+    }
+  }
+  throw lastError;
 }
 
 /**
@@ -88,19 +115,13 @@ function requestHeaders(cookie) {
  * 登录二维码轮询用 code 800/801/802 表达状态，走 apiRaw（见下）。
  */
 async function api(path, params, timeout, cookie) {
-  const url = apiBase() + path;
   let res;
-  const headers = requestHeaders(cookie);
   try {
-    res = await axios.get(url, {
-      params: params || {},
-      headers,
-      timeout: timeout || 15000
-    });
+    res = await requestApi(path, params, timeout, cookie);
   } catch (e) {
     const status = e && e.response && e.response.status;
     if (status === 401) {
-      throw new Error(token ? 'API Token 不对，去插件设置里改一下' : '这个接口需要 API Token，去插件设置里填');
+      throw new Error(apiToken() ? 'API Token 不对，去插件设置里改一下' : '这个接口需要 API Token，去插件设置里填');
     }
     throw new Error(status ? `接口返回 HTTP ${status}` : `接口请求失败：${e.message}`);
   }
@@ -594,11 +615,7 @@ async function getMusicComments(musicItem, page) {
 async function apiRaw(path, params, timeout, cookie) {
   let res;
   try {
-    res = await axios.get(apiBase() + path, {
-      params: params || {},
-      headers: requestHeaders(cookie),
-      timeout: timeout || 15000
-    });
+    res = await requestApi(path, params, timeout, cookie);
   } catch (e) {
     const status = e && e.response && e.response.status;
     throw new Error(status ? `接口返回 HTTP ${status}` : `接口请求失败：${e.message}`);
