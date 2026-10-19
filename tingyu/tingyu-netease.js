@@ -1,8 +1,8 @@
 /**
  * @name 听屿 · 网易云
- * @description 走自建网易云 API，不需要登录 Cookie
+ * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.0.0
+ * @version 1.1.4
  * @srcUrl 见模块导出
  */
 
@@ -69,11 +69,10 @@ const NET_EASE_HEADERS = {
   Referer: 'https://music.163.com/'
 };
 
-/** 统一的 GET，把 code !== 200 当成错误抛出去，避免界面拿到空数据以为成功。 */
-async function api(path, params, timeout) {
-  const url = apiBase() + path;
-  let res;
+/** 请求头：Token + Access 服务令牌，登录与普通接口共用。 */
+function requestHeaders(cookie) {
   const headers = { ...NET_EASE_HEADERS };
+  if (cookie) headers.Cookie = cookie;
   const token = apiToken();
   if (token) headers['X-Api-Token'] = token;
   const access = accessCredentials();
@@ -81,6 +80,17 @@ async function api(path, params, timeout) {
     headers['CF-Access-Client-Id'] = access.id;
     headers['CF-Access-Client-Secret'] = access.secret;
   }
+  return headers;
+}
+
+/**
+ * 统一的 GET，把 code !== 200 当成错误抛出去，避免界面拿到空数据以为成功。
+ * 登录二维码轮询用 code 800/801/802 表达状态，走 apiRaw（见下）。
+ */
+async function api(path, params, timeout, cookie) {
+  const url = apiBase() + path;
+  let res;
+  const headers = requestHeaders(cookie);
   try {
     res = await axios.get(url, {
       params: params || {},
@@ -565,9 +575,124 @@ async function getMusicComments(musicItem, page) {
   return { isEnd: normal.length < PAGE_SIZE, data: [...hot, ...normal] };
 }
 
+/** 同 api()，但业务 code 由调用方判断（二维码轮询 800/801/802 不是错误）。 */
+async function apiRaw(path, params, timeout, cookie) {
+  let res;
+  try {
+    res = await axios.get(apiBase() + path, {
+      params: params || {},
+      headers: requestHeaders(cookie),
+      timeout: timeout || 15000
+    });
+  } catch (e) {
+    const status = e && e.response && e.response.status;
+    throw new Error(status ? `接口返回 HTTP ${status}` : `接口请求失败：${e.message}`);
+  }
+  const data = res.data;
+  if (typeof data === 'string' || (res.headers && String(res.headers['content-type'] || '').includes('text/html'))) {
+    throw new Error('接口被 Cloudflare Access 拒绝了，检查插件的 Access 令牌');
+  }
+  if (!data || typeof data !== 'object') throw new Error('接口返回的不是 JSON');
+  return data;
+}
+
+// ============================ 登录（插件登录规范） ============================
+
+/** 登录 Cookie：用户从「账号登录」扫码拿到后一键填进变量，请求带它就有登录态。 */
+function cookieHeader() {
+  try {
+    if (typeof env !== 'undefined' && env.userVariables && env.userVariables.cookie) {
+      return String(env.userVariables.cookie).trim();
+    }
+  } catch (e) {
+    /* env 不存在时当没登录 */
+  }
+  return '';
+}
+
+/** 扫码登录三步：key → 二维码 → 轮询状态。code 语义与网易云原生一致（800/801/802）。 */
+async function createLoginQRCode() {
+  const keyRes = await api('/login/qr/key', { timestamp: Date.now() });
+  const key = keyRes && keyRes.data && keyRes.data.unikey;
+  if (!key) throw new Error('接口没有返回二维码 key');
+  const qrRes = await api('/login/qr/create', { key, qrimg: 1, timestamp: Date.now() });
+  const data = (qrRes && qrRes.data) || {};
+  // 优先给 base64 图（宿主直接当图片显示），没有就退回扫码 URL（宿主自己编码成二维码）
+  const qrData = data.qrimg || data.qrurl;
+  if (!qrData) throw new Error('接口没有返回二维码');
+  return { key, qrData };
+}
+
+async function checkLoginQRCode(key) {
+  const res = await apiRaw('/login/qr/check', { key, timestamp: Date.now() });
+  // 状态码沿用网易云原生约定，宿主按同一套解释：
+  // 800 二维码过期 / 801 等待扫码 / 802 已扫码待确认 / 803 授权成功。
+  const code = res.code === undefined ? 801 : res.code;
+  if (code === 803) {
+    const raw = res.cookie || (res.data && res.data.cookie) || '';
+    const items = Array.isArray(raw) ? raw : String(raw).split(';');
+    // 服务端把整串 Set-Cookie 用分号拼起来了，可能夹带 Path/Domain 之类的属性，只留真正的键值对
+    const skip = ['path', 'domain', 'expires', 'max-age', 'samesite', 'secure', 'httponly'];
+    const pairs = items
+      .map((item) => String(item).trim().split(';')[0].trim())
+      .filter((item) => item.includes('='))
+      .filter((item) => !skip.includes(item.split('=')[0].trim().toLowerCase()));
+    const cookie = pairs.join('; ');
+    if (!/(^|;\s*)MUSIC_U=/.test(cookie)) throw new Error('登录成功但接口没有返回有效凭据');
+    return { code: 803, cookie };
+  }
+  return { code };
+}
+
+async function loginStatus(cookie) {
+  // 必须带登录 Cookie，否则接口只会返回未登录的空 profile
+  const res = await api('/login/status', { timestamp: Date.now() }, 15000, cookie);
+  const body = (res && res.data) || res || {};
+  const profile = body.profile || (body.data && body.data.profile) || (res && res.profile);
+  if (!profile) return { nickname: '', avatar: '' };
+  return { nickname: profile.nickname || '', avatar: profile.avatarUrl || '' };
+}
+
+// ============================ 每日推荐（需登录） ============================
+
+/** 每日推荐歌单：30 张按账号口味推荐。没登录（没 cookie）时抛错，宿主据此隐藏入口。 */
+async function getRecommendWorks() {
+  const cookie = cookieHeader();
+  if (!cookie) throw new Error('先在插件设置里填登录 Cookie 才能用每日推荐');
+  const res = await api('/recommend/resource', { timestamp: Date.now() });
+  const list = (res && res.recommend && Array.isArray(res.recommend) ? res.recommend : [])
+    .map((item) => {
+      const sheet = item && item.platformRecommendationInfo && item.platformRecommendationInfo.songSheetRecommendation;
+      const base = sheet || item;
+      const pic = (base && base.picUrl) || (base && base.coverUrl) || '';
+      return {
+        id: String((base && (base.id !== undefined ? base.id : base.playlistId)) || ''),
+        title: (base && (base.name || base.title)) || '推荐歌单',
+        artist: '',
+        album: '',
+        cover: pic,
+        sheet: { id: String((base && (base.id !== undefined ? base.id : base.playlistId)) || ''), platform: PLATFORM }
+      };
+    })
+    .filter((item) => item.id);
+  if (!list.length) throw new Error('今日没有推荐歌单（账号不满足条件或登录已过期）');
+  return { isEnd: true, data: list };
+}
+
+/** 每日 30 首：按口味推荐的歌曲。 */
+async function getDailySongs() {
+  const cookie = cookieHeader();
+  if (!cookie) throw new Error('先在插件设置里填登录 Cookie 才能用每日推荐');
+  const res = await api('/recommend/songs', { timestamp: Date.now() });
+  const raw = (res && res.data && Array.isArray(res.data.dailySongs)) ? res.data.dailySongs : [];
+  const list = raw.map((song) => toSong(song));
+  if (!list.length) throw new Error('今日没有推荐歌曲（账号不满足条件或登录已过期）');
+  return { isEnd: true, data: list };
+}
+
 module.exports = {
   platform: PLATFORM,
-  version: '1.0.0',
+  version: '1.1.4',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
@@ -579,7 +704,19 @@ module.exports = {
     importMusicItem: ['支持网易云歌曲链接或 ID'],
     importMusicSheet: ['支持网易云歌单链接、短链或整段分享文案']
   },
+  login: {
+    sessionCookieKey: 'MUSIC_U',
+    sessionTTL: 30,
+    preferredVariableKey: 'cookie'
+  },
   userVariables: [
+    {
+      key: 'cookie',
+      name: '登录 Cookie',
+      type: 'password',
+      hint: '从「账号登录」扫码后一键填入',
+      description: '填了才有每日推荐和按口味推荐歌单；在「我的 → 账号登录」扫码获取'
+    },
     {
       key: 'token',
       name: 'API Token',
@@ -621,5 +758,10 @@ module.exports = {
   getTopListDetail,
   getRecommendSheetTags,
   getRecommendSheetsByTag,
-  getMusicComments
+  getMusicComments,
+  createLoginQRCode,
+  checkLoginQRCode,
+  loginStatus,
+  getRecommendWorks,
+  getDailySongs
 };
