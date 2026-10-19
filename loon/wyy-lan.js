@@ -15,9 +15,15 @@ const LAN_BASE = String(options.lanBase || '').trim().replace(/\/+$/, '');
 try {
   const config = JSON.parse($config.getConfig());
 
-  if (!HOME_WIFIS.length || !/^https?:\/\/[\w.-]+(?::\d+)?$/i.test(LAN_BASE) || !HOME_WIFIS.includes(config.ssid)) {
+  const validBase = /^https?:\/\/[\w.-]+(?::\d+)?$/i.test(LAN_BASE);
+  console.log('[wyy-lan v2] SSID=' + JSON.stringify(config.ssid || '')
+    + ', configured=' + HOME_WIFIS.length + ', validBase=' + validBase);
+  if (!HOME_WIFIS.length || !validBase || !HOME_WIFIS.includes(config.ssid)) {
+    console.log('[wyy-lan v2] KEEP: ' + (!HOME_WIFIS.length ? 'Wi-Fi list empty'
+      : !validBase ? 'invalid LAN address' : 'SSID not matched'));
     $done({});
   } else {
+    console.log('[wyy-lan v2] REWRITE -> ' + LAN_BASE + ', node=DIRECT');
     const headers = { ...$request.headers };
     Object.keys(headers).forEach(key => {
       if ([
