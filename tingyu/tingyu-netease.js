@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.4
+ * @version 1.1.5
  * @srcUrl 见模块导出
  */
 
@@ -357,7 +357,22 @@ async function importMusicSheet(urlLike) {
   if (!id) throw new Error('没能从这段内容里认出歌单 ID');
   const items = await fetchAllTracks(id, 1000);
   if (!items.length) throw new Error('这个歌单里没有歌');
-  return items;
+  // 顺带把歌单名和封面带回去，宿主会把它们存进本地歌单。
+  // 详情接口失败不该让整次导入失败，所以单独兜一层。
+  let title = '';
+  let coverImg = '';
+  try {
+    const detail = await api('/playlist/detail', { id: String(id) });
+    const sheet = detail && detail.playlist;
+    if (sheet) {
+      title = sheet.name || '';
+      coverImg = sheet.coverImgUrl || sheet.picUrl || '';
+    }
+  } catch (e) {
+    title = '';
+    coverImg = '';
+  }
+  return { title: title || '导入的歌单', coverImg, musicList: items };
 }
 
 async function fetchAllTracks(playlistId, limit) {
@@ -692,7 +707,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.4',
+  version: '1.1.5',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
