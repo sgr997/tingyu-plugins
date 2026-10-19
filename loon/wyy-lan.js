@@ -6,13 +6,16 @@
  */
 
 const options = typeof $argument === 'object' && $argument ? $argument : {};
-const HOME_WIFI = String(options.homeWifi || '').trim();
+const HOME_WIFIS = String(options.homeWifi || '')
+  .split(/[,，\r\n]+/)
+  .map(name => name.trim())
+  .filter(Boolean);
 const LAN_BASE = String(options.lanBase || '').trim().replace(/\/+$/, '');
 
 try {
   const config = JSON.parse($config.getConfig());
 
-  if (!HOME_WIFI || !/^https?:\/\/[\w.-]+(?::\d+)?$/i.test(LAN_BASE) || config.ssid !== HOME_WIFI) {
+  if (!HOME_WIFIS.length || !/^https?:\/\/[\w.-]+(?::\d+)?$/i.test(LAN_BASE) || !HOME_WIFIS.includes(config.ssid)) {
     $done({});
   } else {
     const headers = { ...$request.headers };

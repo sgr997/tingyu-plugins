@@ -6,7 +6,7 @@
 #!type = normal
 
 [Argument]
-homeWifi = input,"",tag=家庭 Wi-Fi 名称,desc=准确填写家中的 SSID；留空时保持公网请求
+homeWifi = input,"",tag=家庭 Wi-Fi 名称,desc=多个 SSID 用英文或中文逗号分隔；留空时保持公网请求
 lanBase = input,"",tag=局域网 API 地址,desc=填写包含协议和端口的局域网地址；留空时保持公网请求
 
 [Script]
