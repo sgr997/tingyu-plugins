@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.7
+ * @version 1.1.8
  * @srcUrl 见模块导出
  */
 
@@ -92,13 +92,24 @@ async function requestApi(path, params, timeout, cookie) {
 }
 
 /**
+ * 配置了登录 Cookie 就默认带上（搜索 / 播放 / 歌词 / 详情 / 推荐都走登录态，
+ * 每日推荐不带 Cookie 服务端拿不到账号口味，返回的数据不会按天变化）；
+ * 登录二维码三步不带（扫码流程本身不需要登录态）。
+ * 显式传参永远优先：传具体 Cookie 用它，传 null 强制不带。
+ */
+function defaultCookieFor(path) {
+  if (path.indexOf('/login/qr/') === 0) return undefined;
+  return cookieHeader() || undefined;
+}
+
+/**
  * 统一的 GET，把 code !== 200 当成错误抛出去，避免界面拿到空数据以为成功。
  * 登录二维码轮询用 code 800/801/802 表达状态，走 apiRaw（见下）。
  */
 async function api(path, params, timeout, cookie) {
   let res;
   try {
-    res = await requestApi(path, params, timeout, cookie);
+    res = await requestApi(path, params, timeout, cookie !== undefined ? cookie : defaultCookieFor(path));
   } catch (e) {
     const status = e && e.response && e.response.status;
     if (status === 401) {
@@ -596,7 +607,7 @@ async function getMusicComments(musicItem, page) {
 async function apiRaw(path, params, timeout, cookie) {
   let res;
   try {
-    res = await requestApi(path, params, timeout, cookie);
+    res = await requestApi(path, params, timeout, cookie !== undefined ? cookie : defaultCookieFor(path));
   } catch (e) {
     const status = e && e.response && e.response.status;
     throw new Error(status ? `接口返回 HTTP ${status}` : `接口请求失败：${e.message}`);
@@ -725,7 +736,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.7',
+  version: '1.1.8',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
