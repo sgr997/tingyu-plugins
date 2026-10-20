@@ -1,6 +1,6 @@
 # 听屿插件登录规范（登录 + 续期）
 
-> 适用对象：任何想在听屿里提供账号登录能力的插件（自研或第三方，如星海音乐源）。
+> 适用对象：任何想在听屿里提供账号登录能力的插件。
 > 架构约定：宿主只认协议不认具体平台——宿主导固定流程（模板方法），每个插件自己实现「怎么换凭据」（策略），可选能力用方法存在性表达（抽象方法）。
 
 ## 1. 能力声明：login 元数据
@@ -67,22 +67,43 @@ async function refreshLogin() {
 
 JS 桥没有类型化错误，文本就是契约；宿主契约测试锁住了两端格式。
 
-## 4. 接入示例（以星海音乐源为例）
+## 4. 接入示例
+
+最小骨架（`apiBase()`、`cookieHeader()` 等辅助函数按你插件自己的实现替换）：
 
 ```js
-// 星海后端若是网易云系（netease api 系），基本照抄听屿插件的实现即可；
-// 其他后端换成对应平台的会话续期接口，返回结构保持一致。
+/** 登录续期：拿当前 Cookie 调平台的会话续期接口，换回新 Cookie。
+ * 成功返回 { code: 200, cookie }；凭据已死或网络失败直接 throw。 */
 async function refreshLogin() {
-  const cookie = (env.userVariables && env.userVariables.cookie) || '';
-  if (!cookie) throw new Error('还没有登录');
+  const cookie = cookieHeader();
+  if (!cookie) throw new Error('还没有登录，先去「账号登录」扫码');
   const res = await axios.get(apiBase() + '/login/refresh', {
     params: { timestamp: Date.now() },
     headers: { Cookie: cookie }
   });
-  if (res.data.code !== 200) throw new Error(`续期失败：code=${res.data.code}`);
-  const raw = res.data.cookie || '';
+  const body = res.data || {};
+  if (body.code !== 200) throw new Error(`续期失败：code=${body.code}`);
+  const raw = body.cookie || '';
+  // 凭据串必须包含 login.sessionCookieKey 声明的字段，宿主会校验
   if (!/(^|;\s*)MUSIC_U=/.test(raw)) throw new Error('续期没有返回有效凭据');
   return { code: 200, cookie: raw };
 }
-// module.exports 里加上 refreshLogin 即完成接入
+
+module.exports = {
+  // ……其他导出
+  login: {
+    sessionCookieKey: 'MUSIC_U',
+    sessionTTL: 30,
+    preferredVariableKey: 'cookie'
+  },
+  createLoginQRCode,
+  checkLoginQRCode,
+  loginStatus,
+  refreshLogin
+};
 ```
+
+两个要点：
+
+1. `refreshLogin` 是**可选**导出：不实现，宿主静默跳过续期，插件其余功能不受影响
+2. 凭据串格式必须是 `k=v; k=v` 请求头串（不是 Set-Cookie 数组、不是 JSON），且包含 `sessionCookieKey` 字段
