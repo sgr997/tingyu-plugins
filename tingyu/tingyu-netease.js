@@ -727,9 +727,10 @@ async function getRecommendWorks() {
     .filter((item) => item.id);
   if (!list.length) throw new Error('今日没有推荐歌单（账号不满足条件或登录已过期）');
   // /recommend/resource 只回几张，首页一页三项时显得太薄，用 /personalized 补到 12 张。
+  // /personalized 是固定热门榜，全量取永远同一批，这里拉 30 张随机抽样，横滑行隔天换一批。
   if (list.length < 9) {
     try {
-      const extra = await api('/personalized', { limit: 12, timestamp: Date.now() });
+      const extra = await api('/personalized', { limit: 30, timestamp: Date.now() });
       const seen = new Set(list.map((item) => item.id));
       const topUp = (Array.isArray(extra && extra.result) ? extra.result : [])
         .map((item) => ({
@@ -741,6 +742,12 @@ async function getRecommendWorks() {
           sheet: { id: String((item && item.id) || ''), platform: PLATFORM }
         }))
         .filter((item) => item.id && item.title && !seen.has(item.id));
+      for (let i = topUp.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = topUp[i];
+        topUp[i] = topUp[j];
+        topUp[j] = tmp;
+      }
       list = list.concat(topUp);
     } catch (error) {
       // 补位失败不影响已有推荐
@@ -762,7 +769,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.9',
+  version: '1.1.10',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
