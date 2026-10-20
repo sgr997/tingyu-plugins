@@ -668,6 +668,32 @@ async function checkLoginQRCode(key) {
   return { code };
 }
 
+/** 登录续期：拿当前 Cookie 调 /login/refresh 换新 Cookie。
+ * 成功返回 { code: 200, cookie }；code 301 = 网易判定已过期，只能重新扫码。
+ * 续出来的 Cookie 由宿主写回插件变量（env.userVariables 对插件只读），
+ * 插件自己改不了，所以这里只负责换、不负责存。 */
+async function refreshLogin() {
+  const cookie = cookieHeader();
+  if (!cookie) throw new Error('还没有登录，先去「账号登录」扫码');
+  const res = await apiRaw('/login/refresh', { timestamp: Date.now() });
+  const body = (res && res.data) || res || {};
+  const code = body.code;
+  if (code !== 200) {
+    throw new Error(code === 301 ? '登录已过期，重新扫码即可' : `续期失败：接口返回 code=${code}`);
+  }
+  const raw = res.cookie || body.cookie || '';
+  const items = Array.isArray(raw) ? raw : String(raw).split(';');
+  // 服务端把整串 Set-Cookie 用分号拼起来了，可能夹带 Path/Domain 之类的属性，只留真正的键值对
+  const skip = ['path', 'domain', 'expires', 'max-age', 'samesite', 'secure', 'httponly'];
+  const pairs = items
+    .map((item) => String(item).trim().split(';')[0].trim())
+    .filter((item) => item.includes('='))
+    .filter((item) => !skip.includes(item.split('=')[0].trim().toLowerCase()));
+  const refreshed = pairs.join('; ');
+  if (!/(^|;\s*)MUSIC_U=/.test(refreshed)) throw new Error('续期成功但接口没有返回有效凭据');
+  return { code: 200, cookie: refreshed };
+}
+
 async function loginStatus(cookie) {
   // 必须带登录 Cookie，否则接口只会返回未登录的空 profile
   const res = await api('/login/status', { timestamp: Date.now() }, 15000, cookie);
@@ -736,7 +762,7 @@ async function getDailySongs() {
 
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.8',
+  version: '1.1.9',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
@@ -806,6 +832,7 @@ module.exports = {
   createLoginQRCode,
   checkLoginQRCode,
   loginStatus,
+  refreshLogin,
   getRecommendWorks,
   getDailySongs
 };
