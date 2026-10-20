@@ -7,7 +7,7 @@
 
 ```js
 module.exports.login = {
-  sessionCookieKey: 'MUSIC_U',   // 核心鉴权字段名，宿主校验凭据完整性用
+  sessionCookieKey: 'SESSIONID', // 核心鉴权字段名（示例），换成你平台真实的会话字段
   sessionTTL: 30,                // 预估有效期（天），账号页展示剩余天数
   preferredVariableKey: 'cookie' // 凭据写入 userVariables 的键名
 }
@@ -63,13 +63,13 @@ async function refreshLogin() {
 
 ### 3.4 登录态失效信号（唯一的文本契约）
 
-登录态接口在凭据过期时抛出的错误文本**必须包含 `code=301`**（沿用网易云业务码约定，`接口返回 code=301（需要登录）`）。宿主按这个文本识别「需要续期」。
+登录态接口在凭据过期时抛出的错误文本**必须包含 `code=301`**。宿主按这个文本识别「需要续期」——不管你后端原生的未登录码是什么，插件层要归一成这个标记。
 
 JS 桥没有类型化错误，文本就是契约；宿主契约测试锁住了两端格式。
 
 ## 4. 接入示例
 
-最小骨架（`apiBase()`、`cookieHeader()` 等辅助函数按你插件自己的实现替换）：
+最小骨架（会话字段名、续期接口路径按你平台真实情况替换；`apiBase()`、`cookieHeader()` 等辅助函数按你插件自己的实现替换）：
 
 ```js
 /** 登录续期：拿当前 Cookie 调平台的会话续期接口，换回新 Cookie。
@@ -77,7 +77,7 @@ JS 桥没有类型化错误，文本就是契约；宿主契约测试锁住了�
 async function refreshLogin() {
   const cookie = cookieHeader();
   if (!cookie) throw new Error('还没有登录，先去「账号登录」扫码');
-  const res = await axios.get(apiBase() + '/login/refresh', {
+  const res = await axios.get(apiBase() + '/auth/refresh', {
     params: { timestamp: Date.now() },
     headers: { Cookie: cookie }
   });
@@ -85,14 +85,14 @@ async function refreshLogin() {
   if (body.code !== 200) throw new Error(`续期失败：code=${body.code}`);
   const raw = body.cookie || '';
   // 凭据串必须包含 login.sessionCookieKey 声明的字段，宿主会校验
-  if (!/(^|;\s*)MUSIC_U=/.test(raw)) throw new Error('续期没有返回有效凭据');
+  if (!/(^|;\s*)SESSIONID=/.test(raw)) throw new Error('续期没有返回有效凭据');
   return { code: 200, cookie: raw };
 }
 
 module.exports = {
   // ……其他导出
   login: {
-    sessionCookieKey: 'MUSIC_U',
+    sessionCookieKey: 'SESSIONID',
     sessionTTL: 30,
     preferredVariableKey: 'cookie'
   },
