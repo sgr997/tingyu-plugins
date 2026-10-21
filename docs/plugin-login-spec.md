@@ -22,7 +22,7 @@ module.exports.login = {
 
 | 方法 | 语义 |
 |---|---|
-| `createLoginQRCode()` | 生成扫码登录凭据，返回 `{ code, key?, qr? }` |
+| `createLoginQRCode()` | 生成扫码登录凭据，返回 `{ key, qrData }`：`qrData` 是二维码内容（登录页 URL 或图片地址），`key` 是轮询凭证 |
 | `checkLoginQRCode(key)` | 轮询扫码状态；`803` 授权成功时返回 `{ code: 803, cookie }` |
 | `loginStatus(cookie)` | 换用户信息，返回 `{ nickname, avatar }` |
 
