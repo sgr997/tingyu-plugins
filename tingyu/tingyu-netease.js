@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.8
+ * @version 1.1.9
  * @srcUrl 见模块导出
  */
 
@@ -69,10 +69,9 @@ const NET_EASE_HEADERS = {
   Referer: 'https://music.163.com/'
 };
 
-/** 请求地址由 apiBase 配置决定，局域网切换交给 Loon。 */
-function requestHeaders(cookie) {
+/** 请求地址由 apiBase 配置决定，局域网切换交给 Loon。Cookie 不走 header：网关只认 ?cookie= query 参数。 */
+function requestHeaders() {
   const headers = { ...NET_EASE_HEADERS };
-  if (cookie) headers.Cookie = cookie;
   const token = apiToken();
   if (token) headers['X-Api-Token'] = token;
   const access = accessCredentials();
@@ -84,19 +83,20 @@ function requestHeaders(cookie) {
 }
 
 async function requestApi(path, params, timeout, cookie) {
+  // 登录态必须走 ?cookie= query：网关（本地与线上）都不解析 Cookie 请求头
+  const query = Object.assign({}, params || {});
+  if (cookie) query.cookie = cookie;
   return axios.get(apiBase() + path, {
-    params: params || {},
-    headers: requestHeaders(cookie),
+    params: query,
+    headers: requestHeaders(),
     timeout: timeout || 15000
   });
 }
 
-/**
- * 配置了登录 Cookie 就默认带上（搜索 / 播放 / 歌词 / 详情 / 推荐都走登录态，
- * 每日推荐不带 Cookie 服务端拿不到账号口味，返回的数据不会按天变化）；
- * 登录二维码三步不带（扫码流程本身不需要登录态）。
- * 显式传参永远优先：传具体 Cookie 用它，传 null 强制不带。
- */
+/** 全部接口默认带登录态（用户拍板：搜索积累偏好，其他带着也无害）；
+ *  仅扫码三步不带（登录流程本身不需要登录态）。
+ *  显式传参永远优先：传具体 Cookie 用它，传 null 强制不带。 */
+
 function defaultCookieFor(path) {
   if (path.indexOf('/login/qr/') === 0) return undefined;
   return cookieHeader() || undefined;
@@ -300,8 +300,39 @@ async function getLyric(musicItem) {
   try {
     const data = await api('/lyric', { id: String(id) });
     const rawLrc = (data.lrc && data.lrc.lyric) || '';
+    // uncollected 的灰歌（如周杰伦）网易连歌词一起锁，走 lrclib 兜底
+    if (!rawLrc.trim() || data.uncollected || /^(\[[^\]]*\]\s*)*暂无歌词\s*$/.test(rawLrc.trim())) {
+      const fallback = await lrclibLyric(musicItem);
+      if (fallback) return fallback;
+    }
     if (!rawLrc.trim()) return null;
     return { rawLrc, translation: (data.tlyric && data.tlyric.lyric) || '' };
+  } catch (e) {
+    const fallback = await lrclibLyric(musicItem);
+    return fallback || null;
+  }
+}
+
+/** lrclib.net 免费歌词库兜底：按歌名+歌手搜，取时长匹配且有同步歌词的第一条。 */
+async function lrclibLyric(musicItem) {
+  try {
+    const title = String(musicItem.title || '').trim();
+    const artist = String(musicItem.artist || '').split(/[\/,，]/)[0].trim();
+    if (!title || !artist) return null;
+    // 网易的 duration 是毫秒，lrclib 是秒
+    const rawDur = Number(musicItem.duration) || 0;
+    const dur = rawDur > 10000 ? Math.round(rawDur / 1000) : rawDur;
+    const res = await axios.get('https://lrclib.net/api/search', {
+      params: { track_name: title, artist_name: artist },
+      timeout: 10000,
+      headers: { 'User-Agent': 'TingYu/1.0 (https://github.com/sgr997/tingyu-plugins)' }
+    });
+    const hits = Array.isArray(res.data) ? res.data : [];
+    const pick = hits.find((r) => r.syncedLyrics && dur > 0 && Math.abs((r.duration || 0) - dur) <= 2)
+      || hits.find((r) => r.syncedLyrics)
+      || hits.find((r) => r.plainLyrics && dur > 0 && Math.abs((r.duration || 0) - dur) <= 2);
+    if (!pick || !pick.syncedLyrics) return null;
+    return { rawLrc: String(pick.syncedLyrics), translation: '' };
   } catch (e) {
     return null;
   }
@@ -560,10 +591,67 @@ async function getRecommendSheetsByTag(tag, page) {
     cat: category,
     order: 'hot',
     limit: PAGE_SIZE,
-    offset: (currentPage - 1) * PAGE_SIZE
+    // 「全部」的第一页加随机起点：order=hot 按收藏量排，第 1 页基本永不变化，
+    // 发现页会几天都是同一批歌单。会话内从随机页接着往下翻，用户选了具体分类时不随机。
+    offset: (hotStartPage(category, currentPage) + currentPage - 2) * PAGE_SIZE
   });
   const items = (data.playlists || []).map(toSheet).filter(Boolean);
   return { isEnd: !data.more || items.length < PAGE_SIZE, data: items };
+}
+
+/** 「全部」分类的随机起始页：每次第 1 页请求重新抽 1~20，后续页沿用同一次的抽签。 */
+let hotPlaylistStartPage = 0;
+function hotStartPage(category, page) {
+  if (category !== '全部') return 1;
+  if (page === 1) {
+    hotPlaylistStartPage = 1 + Math.floor(Math.random() * 20);
+  }
+  return hotPlaylistStartPage || 1;
+}
+
+// ============================ 心动模式（需登录） ============================
+
+/** 「我喜欢的音乐」歌单 id 缓存：/playmode/intelligence/list 的 pid 只认它。 */
+let heartbeatPidCache = null;
+
+async function likedPlaylistId() {
+  if (heartbeatPidCache) return heartbeatPidCache;
+  const acc = await api('/user/account');
+  const uid = acc && acc.profile && acc.profile.userId;
+  if (!uid) throw new Error('登录已过期，重新扫码后再用心动模式');
+  const res = await api('/user/playlist', { uid, limit: 5 });
+  const liked = (res.playlist || []).find((p) => p.specialType === 5);
+  if (!liked) throw new Error('没有找到「我喜欢的音乐」歌单，心动模式要用它做种子');
+  heartbeatPidCache = liked.id;
+  return liked.id;
+}
+
+/** 心动模式：种子歌在队首，后面接智能推荐。没传种子就从喜欢列表随机挑一首。 */
+async function getHeartbeatSongs(musicItem) {
+  if (!cookieHeader()) throw new Error('先扫码登录再用心动模式');
+  const pid = await likedPlaylistId();
+
+  let seed = musicItem && (musicItem._songId || musicItem.id) ? musicItem : null;
+  if (!seed) {
+    const likeRes = await api('/likelist');
+    const ids = (likeRes.ids || []).filter((n) => typeof n === 'number' || /^\d+$/.test(String(n)));
+    if (!ids.length) throw new Error('喜欢列表是空的，先收藏几首歌再用心动模式');
+    const pickId = ids[Math.floor(Math.random() * ids.length)];
+    const detail = await api('/song/detail', { ids: String(pickId) });
+    const raw = ((detail.songs || [])[0]);
+    seed = raw ? toSong(raw) : null;
+  }
+  const seedId = seed ? (seed._songId || seed.id) : null;
+  if (!seedId) throw new Error('心动模式没找到种子歌');
+
+  const res = await api('/playmode/intelligence/list', {
+    id: String(seedId), pid: String(pid), sid: String(seedId), count: 30
+  });
+  const songs = (Array.isArray(res.data) ? res.data : (res.data && res.data.songs) || [])
+    .map((entry) => entry && (entry.songInfo || entry))
+    .map(toSong).filter(Boolean);
+  if (!songs.length) throw new Error('心动模式没有拿到推荐歌曲');
+  return { isEnd: true, data: [seed, ...songs] };
 }
 
 // ============================ 评论 ============================
@@ -709,7 +797,7 @@ async function loginStatus(cookie) {
 async function getRecommendWorks() {
   const cookie = cookieHeader();
   if (!cookie) throw new Error('先在插件设置里填登录 Cookie 才能用每日推荐');
-  const res = await api('/recommend/resource', { timestamp: Date.now() });
+  const res = await api('/recommend/resource');
   let list = (res && res.recommend && Array.isArray(res.recommend) ? res.recommend : [])
     .map((item) => {
       const sheet = item && item.platformRecommendationInfo && item.platformRecommendationInfo.songSheetRecommendation;
@@ -730,7 +818,7 @@ async function getRecommendWorks() {
   // /personalized 是固定热门榜，全量取永远同一批，这里拉 30 张随机抽样，横滑行隔天换一批。
   if (list.length < 9) {
     try {
-      const extra = await api('/personalized', { limit: 30, timestamp: Date.now() });
+      const extra = await api('/personalized', { limit: 30 });
       const seen = new Set(list.map((item) => item.id));
       const topUp = (Array.isArray(extra && extra.result) ? extra.result : [])
         .map((item) => ({
@@ -760,7 +848,7 @@ async function getRecommendWorks() {
 async function getDailySongs() {
   const cookie = cookieHeader();
   if (!cookie) throw new Error('先在插件设置里填登录 Cookie 才能用每日推荐');
-  const res = await api('/recommend/songs', { timestamp: Date.now() });
+  const res = await api('/recommend/songs');
   const raw = (res && res.data && Array.isArray(res.data.dailySongs)) ? res.data.dailySongs : [];
   const list = raw.map((song) => toSong(song));
   if (!list.length) throw new Error('今日没有推荐歌曲（账号不满足条件或登录已过期）');
@@ -841,5 +929,6 @@ module.exports = {
   loginStatus,
   refreshLogin,
   getRecommendWorks,
-  getDailySongs
+  getDailySongs,
+  getHeartbeatSongs
 };
