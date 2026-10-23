@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.9
+ * @version 1.1.10
  * @srcUrl 见模块导出
  */
 
@@ -148,7 +148,11 @@ function secure(url) {
 function artistNames(song) {
   const list = song.ar || song.artists || [];
   if (Array.isArray(list) && list.length) {
-    return list.map((a) => a && a.name).filter(Boolean).join(', ') || '未知歌手';
+    const names = list.map((a) => a && a.name).filter(Boolean);
+    if (names.length) return names.join(', ');
+    // 云盘/自传歌曲 name 为空但 alias 有名（["Jay Chou", "周董"]），别直接判未知
+    const aliases = list.flatMap((a) => (a && a.alias) || []).filter(Boolean);
+    if (aliases.length) return aliases.join(', ');
   }
   if (typeof song.artist === 'string' && song.artist) return song.artist;
   if (song.artist && song.artist.name) return song.artist.name;
