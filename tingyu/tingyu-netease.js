@@ -2,7 +2,7 @@
  * @name 听屿 · 网易云
  * @description 走自建网易云 API；填了登录 Cookie 后可用每日推荐
  * @author 听屿
- * @version 1.1.10
+ * @version 1.1.11
  * @srcUrl 见模块导出
  */
 
@@ -859,9 +859,54 @@ async function getDailySongs() {
   return { isEnd: true, data: list };
 }
 
+/** 听歌打卡：宿主在一首歌听满阈值（≥60 秒或过半）后回调，向网关 /scrobble 上报。
+ *  网关会同时发 startplay（进官方 App 的「最近播放」）和 play（涨「听歌排行」）。
+ *  网易云只认客户端主动上报，纯 API 播放不会有任何记录，所以必须有这一步。
+ *  失败静默返回 false：打卡是锦上添花，不能影响播放。 */
+async function scrobble({ song, played } = {}) {
+  const id = song && (song.id ?? song.songId);
+  if (!id) return false;
+  try {
+    await api('/scrobble', {
+      id,
+      sourceid: 0,
+      time: Math.max(0, Math.round((played || 0) * 1000))
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 红心同步：听屿收藏/取消收藏时上报，与网易云「我喜欢的音乐」保持一致。
+ *  红心是官方推荐最强的正信号，取消红心是最直接的负反馈。
+ *  走 /song/like（旧 /like 是 /api/radio/like，实测已 400 废弃）。失败静默返回 false。 */
+async function like({ song, like } = {}) {
+  const id = song && (song.id ?? song.songId);
+  if (!id) return false;
+  try {
+    await api('/song/like', { id, like: like === false ? 'false' : 'true' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** 每日推荐「不感兴趣」：宿主在日推列表点了不感兴趣后上报，官方算法不再推这首。 */
+async function dislikeDailySong({ song } = {}) {
+  const id = song && (song.id ?? song.songId);
+  if (!id) return false;
+  try {
+    await api('/recommend/songs/dislike', { id });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   platform: PLATFORM,
-  version: '1.1.10',
+  version: '1.1.11',
   author: '听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
@@ -934,5 +979,8 @@ module.exports = {
   refreshLogin,
   getRecommendWorks,
   getDailySongs,
-  getHeartbeatSongs
+  getHeartbeatSongs,
+  scrobble,
+  like,
+  dislikeDailySong
 };
