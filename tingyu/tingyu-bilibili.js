@@ -394,6 +394,40 @@ async function getArtistWorks(artistItem, page) {
 
 // ============================ 播放地址 ============================
 
+function hostOf(url) {
+  const match = /^[a-z]+:\/\/([^/?#]+)/i.exec(String(url || ''));
+  return match ? match[1] : '';
+}
+
+/**
+ * baseUrl 常是 mcdn.bilivideo.cn:8082 这类 P2P 边缘节点，实测首字节 300–450ms、
+ * 速度 0.7–1MB/s；同一首歌的 backupUrl 里 upos 镜像首字节 60–190ms、6–16MB/s。
+ * AVPlayer 不会自己换源，所以这里按 host 挑最快的一档。
+ * 优先级：upos 镜像 > 国内 cn- 节点 > mcdn 原始地址 > 其它未知域名（可能是死节点）。
+ */
+const HOST_UPOS = /^upos-[a-z0-9-]+\.bilivideo\.com$/i;
+const HOST_CN = /^cn-[a-z0-9-]+\.bilivideo\.com$/i;
+const HOST_MCDN = /mcdn\.bilivideo\.cn/i;
+
+function rankCandidate(url) {
+  const host = hostOf(url);
+  if (HOST_UPOS.test(host)) return 0;
+  if (HOST_CN.test(host)) return 1;
+  if (HOST_MCDN.test(host)) return 2;
+  return 3;
+}
+
+function pickBestURL(baseURL, backups) {
+  const candidates = [baseURL].concat(Array.isArray(backups) ? backups : []).filter(Boolean);
+  const unique = candidates.filter(function (url, index) {
+    return candidates.indexOf(url) === index;
+  });
+  unique.sort(function (a, b) {
+    return rankCandidate(a) - rankCandidate(b);
+  });
+  return unique[0];
+}
+
 async function getMediaSource(musicItem, quality) {
   let cid = musicItem.cid;
   if (!cid) {
@@ -420,24 +454,23 @@ async function getMediaSource(musicItem, quality) {
       return a.bandwidth - b.bandwidth;
     });
     const last = audios.length - 1;
+    let audio;
     switch (quality) {
       case 'low':
-        url = audios[0].baseUrl;
+        audio = audios[0];
         break;
       case 'standard':
-        url = audios[Math.min(1, last)].baseUrl;
+        audio = audios[Math.min(1, last)];
         break;
       case 'high':
-        url = audios[Math.min(2, last)].baseUrl;
-        break;
-      case 'super':
-        url = audios[last].baseUrl;
+        audio = audios[Math.min(2, last)];
         break;
       default:
-        url = audios[last].baseUrl;
+        audio = audios[last];
     }
+    url = pickBestURL(audio.baseUrl, audio.backupUrl || audio.backup_url);
   } else if (data.durl && data.durl[0]) {
-    url = data.durl[0].url;
+    url = pickBestURL(data.durl[0].url, data.durl[0].backup_url || data.durl[0].backupUrl);
   }
   if (!url) throw new Error('获取播放地址：这个视频没有可用音轨');
 
@@ -448,7 +481,7 @@ async function getMediaSource(musicItem, quality) {
       'user-agent': UA,
       accept: '*/*',
       referer: 'https://www.bilibili.com/video/' + (musicItem.bvid || musicItem.aid || ''),
-      host: finalURL.split('/')[2] || ''
+      host: hostOf(finalURL)
     }
   };
 }
