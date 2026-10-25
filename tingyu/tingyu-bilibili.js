@@ -1,5 +1,5 @@
 /**
- * @name 听屿 · 哔哩哔哩
+ * @name 听屿 · bilibili
  * @description 哔哩哔哩音源。按 bilibili-API-collect 现行文档改造：WBI 签名、buvid3 cookie、https 封面、评论翻页
  * @author 猫头猫（原版）/ 听屿（改造）
  * @version 0.4.0
@@ -12,7 +12,7 @@ const dayjs = require('dayjs');
 const he = require('he');
 const CryptoJs = require('crypto-js');
 
-const PLATFORM = 'bilibili';
+const PLATFORM = '听屿·bilibili';
 const API = 'https://api.bilibili.com';
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
@@ -123,8 +123,10 @@ async function ensureWbi(force) {
 
 /** 带上 bili_ticket 能降低风控概率，文档写明它是可选项。 */
 async function cookieForApi() {
-  const device = await ensureBuvid();
-  const keys = await ensureWbi(false);
+  // 设备标识和 WBI 密钥互不依赖，并行取，省掉一次串行往返。
+  const results = await Promise.all([ensureBuvid(), ensureWbi(false)]);
+  const device = results[0];
+  const keys = results[1];
   const parts = [
     'buvid3=' + device.b_3,
     'buvid4=' + device.b_4,
@@ -264,9 +266,36 @@ async function plainGet(path, params, options) {
 
 // ============================ 视频信息 ============================
 
-async function getVideoInfo(bvid, aid) {
+/**
+ * 取分P信息（含 cid）。用 pagelist 而不是 view：view 会带回统计、UP 主、分辨率等
+ * 一大堆用不上的字段（实测 3.0KB），pagelist 只回分P（1.1KB，多P视频差距更大）。
+ */
+async function getPages(bvid, aid) {
   const params = bvid ? { bvid: bvid } : { aid: aid };
-  return (await plainGet('/x/web-interface/view', params, { cookie: true, what: '获取视频信息' })).data;
+  const data = (await plainGet('/x/player/pagelist', params, {
+    cookie: true,
+    what: '获取分P信息'
+  })).data;
+  return Array.isArray(data) ? data : [];
+}
+
+/** cid 按 bvid/aid 缓存，重播和重复取流不用再打一次分P接口。 */
+const cidCache = {};
+
+function mediaKey(item) {
+  if (item && item.bvid) return item.bvid;
+  if (item && item.aid) return 'aid' + item.aid;
+  return '';
+}
+
+async function resolveCid(item) {
+  if (item.cid) return item.cid;
+  const key = mediaKey(item);
+  if (key && cidCache[key]) return cidCache[key];
+  const pages = await getPages(item.bvid, item.aid);
+  const cid = pages.length ? pages[0].cid : null;
+  if (cid && key) cidCache[key] = cid;
+  return cid;
 }
 
 function formatMedia(result) {
@@ -429,11 +458,7 @@ function pickBestURL(baseURL, backups) {
 }
 
 async function getMediaSource(musicItem, quality) {
-  let cid = musicItem.cid;
-  if (!cid) {
-    const info = await getVideoInfo(musicItem.bvid, musicItem.aid);
-    cid = info && info.cid;
-  }
+  const cid = await resolveCid(musicItem);
   if (!cid) throw new Error('获取播放地址：缺少视频 cid');
 
   const params = { cid: cid, fnval: 16, fnver: 0 };
@@ -489,10 +514,9 @@ async function getMediaSource(musicItem, quality) {
 // ============================ 分 P ============================
 
 async function getAlbumInfo(albumItem) {
-  const info = await getVideoInfo(albumItem.bvid, albumItem.aid);
-  const pages = (info && info.pages) || [];
+  const pages = await getPages(albumItem.bvid, albumItem.aid);
   if (!pages.length) {
-    return { musicList: [Object.assign({}, albumItem, { cid: info && info.cid })] };
+    return { musicList: [albumItem] };
   }
   if (pages.length === 1) {
     return { musicList: [Object.assign({}, albumItem, { cid: pages[0].cid })] };
