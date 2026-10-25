@@ -702,7 +702,13 @@ async function getMusicComments(musicItem, page) {
     plat: 1,
     web_location: 1315875,
     pagination_str: JSON.stringify({ offset: offset })
-  }, { what: '获取评论' });
+  }, {
+    // 关键：这个接口不能带 buvid/bili_ticket cookie。
+    // 实测同一条视频，无 cookie 返回 19 条主楼且 is_end=false（可翻页）；
+    // 带上设备 cookie 反而被当成未登录设备，只给 3 条并把 is_end 设成 true。
+    cookie: false,
+    what: '获取评论'
+  });
 
   const data = payload.data || {};
   const cursor = data.cursor || {};
