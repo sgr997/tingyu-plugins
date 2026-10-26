@@ -2,7 +2,7 @@
  * @name 听屿 · bilibili
  * @description 哔哩哔哩音源。按 bilibili-API-collect 现行文档改造：WBI 签名、buvid3 cookie、https 封面、评论翻页
  * @author 猫头猫（原版）/ 听屿（改造）
- * @version 0.4.0
+ * @version 0.4.1
  * @srcUrl 见模块导出
  */
 
@@ -16,6 +16,9 @@ const PLATFORM = '听屿·bilibili';
 const API = 'https://api.bilibili.com';
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
+/** 播放地址请求头用的 UA，与原版保持一致（CDN 按它分档）。 */
+const MEDIA_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36 Edg/89.0.774.63';
 const PLUGIN_SRC_URL = [
   'https://raw.githubusercontent.com',
   'sgr997',
@@ -70,7 +73,7 @@ function durationToSec(duration) {
 
 // ============================ 设备标识与 WBI 密钥 ============================
 
-/** buvid3 / buvid4 全站通用，取一次复用；b_nut 随首次获取的时间固定。 */
+/** buvid3 / buvid4 全站通用，取一次复用（与原版一致）。 */
 let buvid = null;
 async function ensureBuvid() {
   if (buvid) return buvid;
@@ -121,19 +124,11 @@ async function ensureWbi(force) {
   return wbi;
 }
 
-/** 带上 bili_ticket 能降低风控概率，文档写明它是可选项。 */
+/** 与原版一致：只带 buvid3 / buvid4，bili_ticket 只用来换 WBI 密钥。 */
 async function cookieForApi() {
-  // 设备标识和 WBI 密钥互不依赖，并行取，省掉一次串行往返。
-  const results = await Promise.all([ensureBuvid(), ensureWbi(false)]);
-  const device = results[0];
-  const keys = results[1];
-  const parts = [
-    'buvid3=' + device.b_3,
-    'buvid4=' + device.b_4,
-    'b_nut=' + device.nut
-  ];
-  if (keys.ticket) parts.push('bili_ticket=' + keys.ticket);
-  return parts.join('; ');
+  // 与原版一致：只带 buvid3 / buvid4 两个字段。
+  const device = await ensureBuvid();
+  return 'buvid3=' + device.b_3 + ';buvid4=' + device.b_4;
 }
 
 const MIXIN_TAB = [
@@ -239,15 +234,16 @@ async function plainGet(path, params, options) {
 // ============================ 视频信息 ============================
 
 /**
- * 取分P信息（含 cid）。用 pagelist 而不是 view：view 会带回统计、UP 主、分辨率等
- * 一大堆用不上的字段（实测 3.0KB），pagelist 只回分P（1.1KB，多P视频差距更大）。
+ * 取分P信息（含 cid）。按原版用 /x/web-interface/view：
+ * 它同时给 data.cid 和 data.pages，单P 视频也有 cid 兜底。
  */
 async function getPages(bvid, aid) {
   const params = bvid ? { bvid: bvid } : { aid: aid };
-  const data = (await plainGet('/x/player/pagelist', params, {
-    what: '获取分P信息'
-  })).data;
-  return Array.isArray(data) ? data : [];
+  const data = (await plainGet('/x/web-interface/view', params, {
+    what: '获取视频信息'
+  })).data || {};
+  if (Array.isArray(data.pages) && data.pages.length) return data.pages;
+  return data.cid ? [{ cid: data.cid }] : [];
 }
 
 /** cid 按 bvid/aid 缓存，重播和重复取流不用再打一次分P接口。 */
@@ -305,9 +301,9 @@ const searchHeaders = {
 };
 
 async function searchBase(keyword, page, searchType) {
-  // 参数照搬网页端：只留最小参数会被判定为非常规请求，直接返回 v_voucher 挑战。
-  const payload = await signedGet(
-    '/x/web-interface/wbi/search/type',
+  // 与原版一致：普通接口 + buvid cookie，不做 WBI 签名。
+  const data = (await plainGet(
+    '/x/web-interface/search/type',
     {
       context: '',
       page: page,
@@ -326,9 +322,9 @@ async function searchBase(keyword, page, searchType) {
       search_type: searchType,
       dynamic_offset: 0
     },
-    { headers: searchHeaders, what: '搜索' }
-  );
-  return payload.data || {};
+    { headers: searchHeaders, cookie: true, what: '搜索' }
+  )).data;
+  return data || {};
 }
 
 async function searchAlbum(keyword, page) {
@@ -382,7 +378,12 @@ async function getArtistWorks(artistItem, page) {
     },
     {
       headers: {
+        accept: '*/*',
+        'accept-encoding': 'gzip, deflate, br, zstd',
         origin: 'https://space.bilibili.com',
+        'sec-fetch-site': 'same-site',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-dest': 'empty',
         referer: 'https://space.bilibili.com/' + artistItem.id + '/video'
       },
       what: '获取 UP 主投稿'
@@ -438,13 +439,12 @@ async function getMediaSource(musicItem, quality) {
   const cid = await resolveCid(musicItem);
   if (!cid) throw new Error('获取播放地址：缺少视频 cid');
 
-  const params = { cid: cid, fnval: 16, fnver: 0 };
+  // 与原版一致：普通 playurl 接口，参数只有 bvid/aid + cid + fnval。
+  const params = { cid: cid, fnval: 16 };
   if (musicItem.bvid) params.bvid = musicItem.bvid;
   else params.aid = musicItem.aid;
 
-  // playurl 不带 cookie：实测带上 buvid 反而容易被风控返回 412。
-  const data = (await signedGet('/x/player/wbi/playurl', params, {
-    cookie: false,
+  const data = (await plainGet('/x/player/playurl', params, {
     what: '获取播放地址'
   })).data;
   if (!data) throw new Error('获取播放地址：接口没有返回数据');
@@ -470,6 +470,7 @@ async function getMediaSource(musicItem, quality) {
       default:
         audio = audios[last];
     }
+    // 唯一的性能改动：从 baseUrl + backupUrl 里挑最快的 CDN，而不是死用 baseUrl。
     url = pickBestURL(audio.baseUrl, audio.backupUrl || audio.backup_url);
   } else if (data.durl && data.durl[0]) {
     url = pickBestURL(data.durl[0].url, data.durl[0].backup_url || data.durl[0].backupUrl);
@@ -480,10 +481,12 @@ async function getMediaSource(musicItem, quality) {
   return {
     url: finalURL,
     headers: {
-      'user-agent': UA,
+      'user-agent': MEDIA_UA,
       accept: '*/*',
-      referer: 'https://www.bilibili.com/video/' + (musicItem.bvid || musicItem.aid || ''),
-      host: hostOf(finalURL)
+      host: hostOf(finalURL),
+      'accept-encoding': 'gzip, deflate, br',
+      connection: 'keep-alive',
+      referer: 'https://www.bilibili.com/video/' + (musicItem.bvid || musicItem.aid || '')
     }
   };
 }
@@ -708,7 +711,7 @@ async function getMusicComments(musicItem, page) {
 
 module.exports = {
   platform: PLATFORM,
-  version: '0.4.0',
+  version: '0.4.1',
   author: '猫头猫 / 听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
