@@ -177,13 +177,7 @@ function isChallenge(data) {
   return !!(data && data.data && data.data.v_voucher);
 }
 
-function sleep(ms) {
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
-}
-
-/** 风控类失败带 risk 标记，交给 withRiskRetry 决定是否重试。 */
+/** 风控类失败单独给文案，方便一眼看出是限流而不是接口坏了。 */
 function riskError(what, detail) {
   const error = new Error(what + '：' + detail + '，稍后再试');
   error.risk = true;
@@ -193,75 +187,53 @@ function riskError(what, detail) {
 const RISK_CODES = [-352, -403, -412];
 
 /**
- * 风控是间歇性的：同样的参数换一套设备标识往往就能过。
- * 最多试 3 次，逐次退避，避免请求打得太密反而一直触发校验。
+ * 一次请求，失败就把原因抛给宿主——原版插件没有重试，这里也不加。
+ * 宿主运行时没有定时器（只注入 __hostHTTPRequest），任何退避等待都会直接抛
+ * `Can't find variable: setTimeout`，表现为「详情加载失败」。
  */
-async function withRiskRetry(what, attemptFn) {
-  let lastError = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (attempt > 0) {
-      buvid = null;
-      wbi = null;
-      await sleep(700 * attempt);
-    }
-    try {
-      return await attemptFn(attempt);
-    } catch (e) {
-      if (!e || !e.risk) throw e;
-      lastError = e;
-    }
-  }
-  throw lastError || new Error(what + '失败');
-}
-
-/** 需要 WBI 签名的 GET。 */
 async function signedGet(path, params, options) {
   const opts = options || {};
   const what = opts.what || '请求';
-  return withRiskRetry(what, async function (attempt) {
-    const keys = await ensureWbi(attempt > 0);
-    const query = encWbi(params || {}, keys.imgKey, keys.subKey);
-    const headers = Object.assign({}, BASE_HEADERS, opts.headers || {});
-    if (opts.cookie !== false) headers.cookie = await cookieForApi();
-    let res;
-    try {
-      res = await axios.get(API + path, { params: query, headers: headers, timeout: 15000 });
-    } catch (e) {
-      const status = e && e.response && e.response.status;
-      if (status === 412) throw riskError(what, '被 B 站风控拦截（HTTP 412）');
-      throw new Error(what + '：' + (status ? '接口返回 HTTP ' + status : '请求失败：' + e.message));
-    }
-    const data = res.data;
-    if (isChallenge(data)) throw riskError(what, '触发了 B 站人机校验（v_voucher）');
-    if (data && RISK_CODES.indexOf(data.code) !== -1) {
-      throw riskError(what, '被 B 站风控拦截（' + data.code + '）');
-    }
-    return assertPayload(data, what);
-  });
+  const keys = await ensureWbi(false);
+  const query = encWbi(params || {}, keys.imgKey, keys.subKey);
+  const headers = Object.assign({}, BASE_HEADERS, opts.headers || {});
+  if (opts.cookie !== false) headers.cookie = await cookieForApi();
+  let res;
+  try {
+    res = await axios.get(API + path, { params: query, headers: headers, timeout: 15000 });
+  } catch (e) {
+    const status = e && e.response && e.response.status;
+    if (status === 412) throw riskError(what, '被 B 站风控拦截（HTTP 412）');
+    throw new Error(what + '：' + (status ? '接口返回 HTTP ' + status : '请求失败：' + e.message));
+  }
+  const data = res.data;
+  if (isChallenge(data)) throw riskError(what, '触发了 B 站人机校验（v_voucher）');
+  if (data && RISK_CODES.indexOf(data.code) !== -1) {
+    throw riskError(what, '被 B 站风控拦截（' + data.code + '）');
+  }
+  return assertPayload(data, what);
 }
 
 /** 不需要签名的 GET。 */
 async function plainGet(path, params, options) {
   const opts = options || {};
   const what = opts.what || '请求';
-  return withRiskRetry(what, async function () {
-    const headers = Object.assign({}, BASE_HEADERS, opts.headers || {});
-    if (opts.cookie) headers.cookie = await cookieForApi();
-    let res;
-    try {
-      res = await axios.get(API + path, { params: params || {}, headers: headers, timeout: 15000 });
-    } catch (e) {
-      const status = e && e.response && e.response.status;
-      if (status === 412) throw riskError(what, '被 B 站风控拦截（HTTP 412）');
-      throw new Error(what + '：' + (status ? '接口返回 HTTP ' + status : '请求失败：' + e.message));
-    }
-    const data = res.data;
-    if (isChallenge(data)) throw riskError(what, '触发了 B 站人机校验（v_voucher）');
-    if (data && RISK_CODES.indexOf(data.code) !== -1) {
-      throw riskError(what, '被 B 站风控拦截（' + data.code + '）');
-    }
-    return assertPayload(data, what);
-  });
+  const headers = Object.assign({}, BASE_HEADERS, opts.headers || {});
+  if (opts.cookie) headers.cookie = await cookieForApi();
+  let res;
+  try {
+    res = await axios.get(API + path, { params: params || {}, headers: headers, timeout: 15000 });
+  } catch (e) {
+    const status = e && e.response && e.response.status;
+    if (status === 412) throw riskError(what, '被 B 站风控拦截（HTTP 412）');
+    throw new Error(what + '：' + (status ? '接口返回 HTTP ' + status : '请求失败：' + e.message));
+  }
+  const data = res.data;
+  if (isChallenge(data)) throw riskError(what, '触发了 B 站人机校验（v_voucher）');
+  if (data && RISK_CODES.indexOf(data.code) !== -1) {
+    throw riskError(what, '被 B 站风控拦截（' + data.code + '）');
+  }
+  return assertPayload(data, what);
 }
 
 // ============================ 视频信息 ============================
@@ -273,7 +245,6 @@ async function plainGet(path, params, options) {
 async function getPages(bvid, aid) {
   const params = bvid ? { bvid: bvid } : { aid: aid };
   const data = (await plainGet('/x/player/pagelist', params, {
-    cookie: true,
     what: '获取分P信息'
   })).data;
   return Array.isArray(data) ? data : [];
@@ -302,14 +273,20 @@ function formatMedia(result) {
   const raw = result || {};
   const title = he.decode(String(raw.title || '').replace(/(<em(.*?)>)|(<\/em>)/g, ''));
   const alias = title.match(/《(.+?)》/);
+  const upMid = raw.mid || (raw.owner && raw.owner.mid);
+  const bvid = raw.bvid;
   return {
-    id: raw.cid || raw.bvid || raw.aid,
+    id: raw.cid || bvid || raw.aid,
     aid: raw.aid,
-    bvid: raw.bvid,
+    bvid: bvid,
     artist: raw.author || (raw.owner && raw.owner.name),
+    // 宿主的「歌手」入口优先读 artistId，没有它就只能拿歌名去搜，容易落到别的 UP 主。
+    artistId: upMid ? String(upMid) : undefined,
     title: title,
     alias: alias ? alias[1] : undefined,
-    album: raw.bvid || raw.aid,
+    // 「专辑」入口同理：直接给 bvid，宿主据此调 getAlbumInfo 拿分P，不用再按名字搜。
+    album: bvid || raw.aid,
+    albumId: bvid || raw.aid,
     artwork: secure(raw.pic),
     duration: durationToSec(raw.duration),
     tags: raw.tag ? raw.tag.split(',') : undefined,
@@ -620,7 +597,7 @@ async function getFavoriteList(id) {
       platform: 'web',
       ps: 20,
       pn: page
-    }, { cookie: true, what: '获取收藏夹' });
+    }, { what: '获取收藏夹' });
     const data = payload.data || {};
     const medias = Array.isArray(data.medias) ? data.medias : [];
     result.push.apply(result, medias);
