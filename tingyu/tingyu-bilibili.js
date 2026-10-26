@@ -2,7 +2,7 @@
  * @name 听屿 · bilibili
  * @description 哔哩哔哩音源。按 bilibili-API-collect 现行文档改造：WBI 签名、buvid3 cookie、https 封面、评论翻页
  * @author 猫头猫（原版）/ 听屿（改造）
- * @version 0.4.1
+ * @version 0.4.2
  * @srcUrl 见模块导出
  */
 
@@ -249,9 +249,25 @@ async function getPages(bvid, aid) {
 /** cid 按 bvid/aid 缓存，重播和重复取流不用再打一次分P接口。 */
 const cidCache = {};
 
+/**
+ * 从条目里认出视频身份。宿主「查看专辑」只给一个 id（就是我们返回的 albumId），
+ * 不带 bvid/aid，所以这里要把 BV 号或纯数字 aid 从 id 里还原出来。
+ */
+function videoIds(item) {
+  let bvid = item.bvid;
+  let aid = item.aid;
+  if (!bvid && !aid && item.id !== undefined && item.id !== null) {
+    const text = String(item.id).trim();
+    if (/^BV[0-9A-Za-z]{10}$/i.test(text)) bvid = text;
+    else if (/^\d+$/.test(text)) aid = text;
+  }
+  return { bvid: bvid, aid: aid };
+}
+
 function mediaKey(item) {
-  if (item && item.bvid) return item.bvid;
-  if (item && item.aid) return 'aid' + item.aid;
+  const ids = videoIds(item || {});
+  if (ids.bvid) return ids.bvid;
+  if (ids.aid) return 'aid' + ids.aid;
   return '';
 }
 
@@ -259,7 +275,8 @@ async function resolveCid(item) {
   if (item.cid) return item.cid;
   const key = mediaKey(item);
   if (key && cidCache[key]) return cidCache[key];
-  const pages = await getPages(item.bvid, item.aid);
+  const ids = videoIds(item);
+  const pages = await getPages(ids.bvid, ids.aid);
   const cid = pages.length ? pages[0].cid : null;
   if (cid && key) cidCache[key] = cid;
   return cid;
@@ -440,9 +457,10 @@ async function getMediaSource(musicItem, quality) {
   if (!cid) throw new Error('获取播放地址：缺少视频 cid');
 
   // 与原版一致：普通 playurl 接口，参数只有 bvid/aid + cid + fnval。
+  const ids = videoIds(musicItem);
   const params = { cid: cid, fnval: 16 };
-  if (musicItem.bvid) params.bvid = musicItem.bvid;
-  else params.aid = musicItem.aid;
+  if (ids.bvid) params.bvid = ids.bvid;
+  else params.aid = ids.aid;
 
   const data = (await plainGet('/x/player/playurl', params, {
     what: '获取播放地址'
@@ -486,7 +504,7 @@ async function getMediaSource(musicItem, quality) {
       host: hostOf(finalURL),
       'accept-encoding': 'gzip, deflate, br',
       connection: 'keep-alive',
-      referer: 'https://www.bilibili.com/video/' + (musicItem.bvid || musicItem.aid || '')
+      referer: 'https://www.bilibili.com/video/' + (ids.bvid || ids.aid || '')
     }
   };
 }
@@ -494,7 +512,8 @@ async function getMediaSource(musicItem, quality) {
 // ============================ 分 P ============================
 
 async function getAlbumInfo(albumItem) {
-  const pages = await getPages(albumItem.bvid, albumItem.aid);
+  const ids = videoIds(albumItem);
+  const pages = await getPages(ids.bvid, ids.aid);
   if (!pages.length) {
     return { musicList: [albumItem] };
   }
@@ -711,7 +730,7 @@ async function getMusicComments(musicItem, page) {
 
 module.exports = {
   platform: PLATFORM,
-  version: '0.4.1',
+  version: '0.4.2',
   author: '猫头猫 / 听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
