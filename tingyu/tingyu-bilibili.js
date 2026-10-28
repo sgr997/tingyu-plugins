@@ -452,9 +452,28 @@ function pickBestURL(baseURL, backups) {
   return unique[0];
 }
 
+/**
+ * playurl 结果按 cid + 音质缓存 5 分钟。
+ * 同一集来回点、暂停后重播、失败重试都不用再打一次接口；
+ * 直链有效期是小时级，5 分钟内不会过期（过期由宿主 403 重解析兜底）。
+ */
+const playurlCache = {};
+const PLAYURL_TTL = 5 * 60 * 1000;
+
+function cachedMedia(key) {
+  const hit = playurlCache[key];
+  if (!hit) return null;
+  if (Date.now() - hit.at > PLAYURL_TTL) { delete playurlCache[key]; return null; }
+  return { url: hit.url, headers: Object.assign({}, hit.headers) };
+}
+
 async function getMediaSource(musicItem, quality) {
   const cid = await resolveCid(musicItem);
   if (!cid) throw new Error('获取播放地址：缺少视频 cid');
+
+  const cacheKey = cid + '|' + (quality || 'standard');
+  const hit = cachedMedia(cacheKey);
+  if (hit) return hit;
 
   // 与原版一致：普通 playurl 接口，参数只有 bvid/aid + cid + fnval。
   const ids = videoIds(musicItem);
@@ -496,7 +515,7 @@ async function getMediaSource(musicItem, quality) {
   if (!url) throw new Error('获取播放地址：这个视频没有可用音轨');
 
   const finalURL = secure(url);
-  return {
+  const media = {
     url: finalURL,
     headers: {
       'user-agent': MEDIA_UA,
@@ -507,6 +526,8 @@ async function getMediaSource(musicItem, quality) {
       referer: 'https://www.bilibili.com/video/' + (ids.bvid || ids.aid || '')
     }
   };
+  playurlCache[cacheKey] = { at: Date.now(), url: media.url, headers: media.headers };
+  return media;
 }
 
 // ============================ 分 P ============================
@@ -730,7 +751,7 @@ async function getMusicComments(musicItem, page) {
 
 module.exports = {
   platform: PLATFORM,
-  version: '0.4.2',
+  version: '0.4.3',
   author: '猫头猫 / 听屿',
   srcUrl: PLUGIN_SRC_URL,
   cacheControl: 'no-cache',
