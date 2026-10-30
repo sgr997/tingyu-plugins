@@ -1,0 +1,16 @@
+#!name = 哔哩哔哩按 Wi-Fi 分流
+#!desc = 连到指定 Wi-Fi 时把 B 站接口请求指定到代理策略组，其他网络原样放行、按主配置规则走。需要开启 MITM 并信任 Loon 证书；同一域名下的其他 App 也会被解密，B 站官方客户端若做了证书固定会失败，此时请停用本插件改用 ssid 策略组。
+#!author = sgr997
+#!homepage = https://github.com/sgr997/tingyu-plugins
+#!loon_version = 3.5.1(983)
+#!type = normal
+
+[Argument]
+officeWifi = input,"",tag=走代理的 Wi-Fi 名称,desc=多个 SSID 用英文或中文逗号分隔；留空时不做任何改动
+proxyPolicy = input,"PROXY",tag=代理策略组,desc=填策略组名或节点名；本地没有该策略组时会失败并放行
+
+[Script]
+request if ${url} ~= /^https:\/\/api\.bilibili\.com(\/|$)/i then script("https://raw.githubusercontent.com/sgr997/tingyu-plugins/main/loon/bili-ssid.js", {${officeWifi}, ${proxyPolicy}}) with tag="B站按Wi-Fi分流", timeout=10, requires_body=false
+
+[Mitm]
+hostname = api.bilibili.com
