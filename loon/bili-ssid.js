@@ -120,6 +120,10 @@ try {
   } else if (node) {
     // 拿到组里当前选中的节点名，node 对节点名是文档写明的
     finish({ node: node });
+  } else if (group) {
+    // 自动测速类策略组可能不提供"当前选中节点"，把组名直接交给 Loon 走组内逻辑
+    console.log('[bili-ssid] 组内读不到当前节点，直接把组名交给 Loon：' + group);
+    finish({ node: group });
   } else {
     // 解析不出节点名就别往下传：node 填了无效值会让 Loon 报「找不到策略」并弄坏这次请求
     const detail = names.length
