@@ -76,6 +76,20 @@ function resolveNode(name) {
   }
 }
 
+/** 失败才弹通知，同一内容 5 分钟内只弹一次，避免每首歌都跳。 */
+function notifyOnce(subtitle, content) {
+  try {
+    const key = 'bili-ssid-notify';
+    const last = String($persistentStore.read(key) || '');
+    const now = Date.now();
+    if (last && now - Number(last) < 5 * 60 * 1000) return;
+    $persistentStore.write(String(now), key);
+    $notification.post('B站按Wi-Fi分流：未生效', subtitle, content);
+  } catch (e) {
+    // 通知失败不影响放行
+  }
+}
+
 let finished = false;
 function finish(result) {
   if (!finished) {
@@ -108,9 +122,12 @@ try {
     finish({ node: node });
   } else {
     // 解析不出节点名就别往下传：node 填了无效值会让 Loon 报「找不到策略」并弄坏这次请求
+    const detail = names.length
+      ? 'Loon 里的策略组：' + names.join(' / ')
+      : '读不到策略组，config 字段：' + Object.keys(config || {}).join(',');
     console.log('[bili-ssid] 没解析出节点，本次放行（不指定出站）。'
-      + ' 你填的是 ' + JSON.stringify(TARGET)
-      + '；Loon 里的策略组有：' + (names.length ? names.join(' | ') : '(读不到，config 的字段：' + Object.keys(config || {}).join(',') + ')'));
+      + ' 你填的是 ' + JSON.stringify(TARGET) + '；' + detail);
+    notifyOnce('填的策略组没匹配上：' + TARGET, detail);
     finish({});
   }
 } catch (e) {
