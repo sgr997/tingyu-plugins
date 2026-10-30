@@ -23,6 +23,17 @@ function currentSSID(config) {
   return '';
 }
 
+/** 把策略组解析成它当前选中的节点；传入的本来就是节点名时返回空。 */
+function resolveNode(name) {
+  if (!name) return '';
+  try {
+    const selected = $config.getSelectedPolicy(name);
+    return selected ? String(selected).trim() : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 let finished = false;
 function finish(result) {
   if (!finished) {
@@ -35,15 +46,17 @@ try {
   const config = JSON.parse($config.getConfig() || '{}');
   const ssid = currentSSID(config);
   const hit = WIFI_LIST.length > 0 && WIFI_LIST.indexOf(ssid) !== -1;
+  // 策略组先解析成当前选中的节点，node 字段对节点名的支持是文档写明的
+  const node = hit ? (resolveNode(TARGET) || TARGET) : '';
 
   console.log('[bili-ssid] ssid=' + JSON.stringify(ssid)
     + ', configured=' + WIFI_LIST.length
     + ', hit=' + hit
-    + ', target=' + TARGET);
+    + ', target=' + TARGET
+    + ', node=' + JSON.stringify(node));
 
   if (hit) {
-    // node 接受 DIRECT、节点名或策略组名
-    finish({ node: TARGET });
+    finish({ node: node });
   } else {
     // 放行，交给主配置的规则决定（B 站一般是直连）
     finish({});
