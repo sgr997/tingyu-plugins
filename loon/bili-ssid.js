@@ -23,6 +23,48 @@ function currentSSID(config) {
   return '';
 }
 
+/** 组名常带 emoji 和空格，填的时候容易漏；比较前统一去掉。 */
+function normName(value) {
+  return String(value || '')
+    .replace(/[\uFE0F\u200D]/g, '')
+    .replace(/[\u{1F000}-\u{1FAFF}]/gu, '')
+    .replace(/[\u2600-\u27BF]/g, '')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
+/** 从 getConfig 里挖出所有策略组名字，字段名随版本变，几个候选都试。 */
+function policyGroupNames(config) {
+  const keys = ['all_policy_groups', 'policy_groups', 'policies', 'policyGroups'];
+  const out = [];
+  for (let i = 0; i < keys.length; i += 1) {
+    const list = config && config[keys[i]];
+    if (!Array.isArray(list)) continue;
+    for (let j = 0; j < list.length; j += 1) {
+      const item = list[j];
+      const name = typeof item === 'string' ? item : (item && (item.name || item.title || item.group)) || '';
+      if (name && out.indexOf(name) === -1) out.push(String(name));
+    }
+  }
+  return out;
+}
+
+/** 先精确匹配，再忽略 emoji/空格/大小写，最后按包含关系兜一次。 */
+function matchGroup(target, names) {
+  if (!target) return '';
+  if (names.indexOf(target) !== -1) return target;
+  const want = normName(target);
+  if (!want) return '';
+  for (let i = 0; i < names.length; i += 1) {
+    if (normName(names[i]) === want) return names[i];
+  }
+  for (let i = 0; i < names.length; i += 1) {
+    const n = normName(names[i]);
+    if (n && (n.indexOf(want) !== -1 || want.indexOf(n) !== -1)) return names[i];
+  }
+  return '';
+}
+
 /** 把策略组解析成它当前选中的节点；传入的本来就是节点名时返回空。 */
 function resolveNode(name) {
   if (!name) return '';
@@ -46,29 +88,29 @@ try {
   const config = JSON.parse($config.getConfig() || '{}');
   const ssid = currentSSID(config);
   const hit = WIFI_LIST.length > 0 && WIFI_LIST.indexOf(ssid) !== -1;
-  // 策略组先解析成当前选中的节点，node 字段对节点名的支持是文档写明的
-  const resolved = hit ? resolveNode(TARGET) : '';
-  const node = hit ? (resolved || TARGET) : '';
 
-  // 填的名字解析不出来时，把 Loon 里实际有哪些策略组打到日志，省得一个个猜
-  if (hit && !resolved) {
-    const groups = Array.isArray(config.all_policy_groups)
-      ? config.all_policy_groups.map((g) => (typeof g === 'string' ? g : (g && g.name) || '')).filter(Boolean)
-      : [];
-    console.log('[bili-ssid] 没在策略组里找到 ' + JSON.stringify(TARGET)
-      + '，按原值透传。当前可用：' + (groups.length ? groups.join(' | ') : '(读不到)'));
-  }
+  const names = policyGroupNames(config);
+  const group = hit ? matchGroup(TARGET, names) : '';
+  const node = group ? resolveNode(group) : '';
 
   console.log('[bili-ssid] ssid=' + JSON.stringify(ssid)
     + ', configured=' + WIFI_LIST.length
     + ', hit=' + hit
-    + ', target=' + TARGET
+    + ', target=' + JSON.stringify(TARGET)
+    + ', group=' + JSON.stringify(group)
     + ', node=' + JSON.stringify(node));
 
-  if (hit) {
+  if (!hit) {
+    // 不在这台 Wi-Fi，交给主配置的规则决定
+    finish({});
+  } else if (node) {
+    // 拿到组里当前选中的节点名，node 对节点名是文档写明的
     finish({ node: node });
   } else {
-    // 放行，交给主配置的规则决定（B 站一般是直连）
+    // 解析不出节点名就别往下传：node 填了无效值会让 Loon 报「找不到策略」并弄坏这次请求
+    console.log('[bili-ssid] 没解析出节点，本次放行（不指定出站）。'
+      + ' 你填的是 ' + JSON.stringify(TARGET)
+      + '；Loon 里的策略组有：' + (names.length ? names.join(' | ') : '(读不到，config 的字段：' + Object.keys(config || {}).join(',') + ')'));
     finish({});
   }
 } catch (e) {
