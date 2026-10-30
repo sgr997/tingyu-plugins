@@ -47,7 +47,17 @@ try {
   const ssid = currentSSID(config);
   const hit = WIFI_LIST.length > 0 && WIFI_LIST.indexOf(ssid) !== -1;
   // 策略组先解析成当前选中的节点，node 字段对节点名的支持是文档写明的
-  const node = hit ? (resolveNode(TARGET) || TARGET) : '';
+  const resolved = hit ? resolveNode(TARGET) : '';
+  const node = hit ? (resolved || TARGET) : '';
+
+  // 填的名字解析不出来时，把 Loon 里实际有哪些策略组打到日志，省得一个个猜
+  if (hit && !resolved) {
+    const groups = Array.isArray(config.all_policy_groups)
+      ? config.all_policy_groups.map((g) => (typeof g === 'string' ? g : (g && g.name) || '')).filter(Boolean)
+      : [];
+    console.log('[bili-ssid] 没在策略组里找到 ' + JSON.stringify(TARGET)
+      + '，按原值透传。当前可用：' + (groups.length ? groups.join(' | ') : '(读不到)'));
+  }
 
   console.log('[bili-ssid] ssid=' + JSON.stringify(ssid)
     + ', configured=' + WIFI_LIST.length
